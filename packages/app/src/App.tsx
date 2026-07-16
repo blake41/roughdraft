@@ -61,6 +61,7 @@ import {
   type Page,
   type StorageBackend,
 } from "./storage";
+import { openReconnectingSocket } from "./reconnecting-socket";
 import { UpdateNotice } from "./UpdateNotice";
 import { fetchUpdateStatus, type UpdateStatus } from "./update-status";
 
@@ -1550,29 +1551,32 @@ export function App() {
       sourceUrl.searchParams.set("path", requestedPathState.rawPath);
     }
 
-    const source = new EventSource(`${sourceUrl.pathname}${sourceUrl.search}`);
-    const handleOpenRequest = (event: Event) => {
-      try {
-        const payload = JSON.parse((event as MessageEvent<string>).data) as {
-          url?: unknown;
-        };
-        if (typeof payload.url !== "string" || !payload.url.trim()) return;
+    const close = openReconnectingSocket({
+      url: `${sourceUrl.pathname}${sourceUrl.search}`,
+      onMessage: (data) => {
+        try {
+          const payload = JSON.parse(data) as {
+            type?: unknown;
+            url?: unknown;
+          };
+          // The server also sends { type: "connected", id } on registration;
+          // only navigation deliveries are actionable here.
+          if (payload.type !== "open-request") return;
+          if (typeof payload.url !== "string" || !payload.url.trim()) return;
 
-        const nextUrl = new URL(payload.url, window.location.origin);
-        window.focus();
-        if (nextUrl.href !== window.location.href) {
-          window.location.assign(nextUrl.href);
+          const nextUrl = new URL(payload.url, window.location.origin);
+          window.focus();
+          if (nextUrl.href !== window.location.href) {
+            window.location.assign(nextUrl.href);
+          }
+        } catch (error) {
+          console.error("Failed to handle Roughdraft open request:", error);
         }
-      } catch (error) {
-        console.error("Failed to handle Roughdraft open request:", error);
-      }
-    };
-
-    source.addEventListener("open-request", handleOpenRequest);
+      },
+    });
 
     return () => {
-      source.removeEventListener("open-request", handleOpenRequest);
-      source.close();
+      close();
     };
   }, [requestedPathState.rawPath]);
 

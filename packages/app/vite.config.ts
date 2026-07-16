@@ -19,7 +19,14 @@ export default defineConfig(() => {
     },
     server: {
       proxy: {
-        "/api": `http://localhost:${apiPort}`,
+        // `ws: true` forwards WebSocket upgrades (file-change + open-request
+        // streams) through the dev proxy. The two-line string shorthand does
+        // not reliably forward upgrades across Vite versions, so the target is
+        // expanded to the object form to set it explicitly.
+        "/api": {
+          target: `http://localhost:${apiPort}`,
+          ws: true,
+        },
       },
     },
   };

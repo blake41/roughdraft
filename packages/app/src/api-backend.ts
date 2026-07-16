@@ -1,3 +1,4 @@
+import { openReconnectingSocket } from "./reconnecting-socket";
 import {
   type BackendInfo,
   type CompleteReviewOptions,
@@ -90,25 +91,74 @@ export class ApiBackend implements StorageBackend {
     relativePath: string,
     onChange: (event: MarkdownFileChangeEvent) => void,
   ): () => void {
-    const source = new EventSource(
-      this.buildUrl("/api/markdown-file/events", { path: relativePath }),
-    );
+    // Version last delivered to the consumer. `undefined` means we have not yet
+    // observed any version over this watcher; a real version can be `string`
+    // (file present) or `null` (file absent).
+    let lastVersion: string | null | undefined;
 
-    source.addEventListener("change", (event) => {
-      try {
-        onChange(JSON.parse((event as MessageEvent<string>).data));
-      } catch (error) {
-        console.error("Failed to read markdown file change event:", error);
-      }
+    return openReconnectingSocket({
+      url: this.buildUrl("/api/markdown-file/events", { path: relativePath }),
+      onMessage: (data) => {
+        try {
+          const event = JSON.parse(data) as MarkdownFileChangeEvent;
+          lastVersion = event.version;
+          onChange(event);
+        } catch (error) {
+          // Mirror the SSE handler: log and keep the watcher running.
+          console.error("Failed to read markdown file change event:", error);
+        }
+      },
+      onOpen: ({ reconnect }) => {
+        // Decision 6: resync only AFTER a reconnect (never on the first open).
+        // Changes that landed while the socket was down would otherwise be
+        // missed, so refetch the current state and synthesize a change if it
+        // moved. Perform the fetch directly (rather than via
+        // `getMarkdownFile`) so a 404 can be distinguished from other
+        // failures: a 404 means the file was deleted during the gap and must
+        // be surfaced as `exists: false`, whereas other failures (network
+        // errors, 5xx) are transient and should just be logged.
+        if (!reconnect) return;
+        const baseline = lastVersion;
+        void (async () => {
+          try {
+            const res = await fetch(
+              this.buildUrl("/api/markdown-file", { path: relativePath }),
+            );
+            let exists: boolean;
+            let version: string | null;
+            if (res.status === 404) {
+              exists = false;
+              version = null;
+            } else if (!res.ok) {
+              throw new Error(
+                `Failed to get markdown file ${relativePath}: ${res.status}`,
+              );
+            } else {
+              const page = (await res.json()) as Page;
+              exists = true;
+              version = page.version ?? null;
+            }
+
+            // A live `change` message may have updated `lastVersion` while
+            // this fetch was in flight. That message is authoritative and
+            // strictly newer than whatever this resync observed, so if
+            // `lastVersion` has moved on from `baseline`, discard this
+            // (possibly stale, out-of-order) result instead of clobbering it.
+            if (lastVersion !== baseline) return;
+
+            if (version !== lastVersion) {
+              lastVersion = version;
+              onChange({ path: relativePath, exists, version });
+            }
+          } catch (error) {
+            console.error(
+              "Failed to resync markdown file after reconnect:",
+              error,
+            );
+          }
+        })();
+      },
     });
-
-    source.onerror = (error) => {
-      console.error("Markdown file event stream failed:", error);
-    };
-
-    return () => {
-      source.close();
-    };
   }
 
   async completeReview(

@@ -54,6 +54,37 @@ export function fileConflictNotice(page: Page) {
   return page.getByTestId("file-conflict-notice");
 }
 
+/**
+ * Simulate a broken markdown-file watcher over the WebSocket transport.
+ *
+ * The pre-migration version of these tests used
+ * `page.route("**\/api/markdown-file/events**", (route) => route.abort())`
+ * against the SSE `EventSource`, which never delivered a working connection
+ * to the app. `page.route()` cannot intercept a WebSocket upgrade, so the
+ * WS equivalent is `page.routeWebSocket()`.
+ *
+ * The naive swap — closing the mocked socket immediately — is NOT
+ * equivalent: `openReconnectingSocket` treats a close as "unexpected" and
+ * reconnects ~1s later, and the *second* connection's `onOpen({reconnect:
+ * true})` triggers the resync-on-reconnect fetch (Decision 6), which would
+ * synthesize a `change` event as soon as it observed the external write —
+ * exactly the live-notification path these tests need suppressed so the
+ * conflict is only ever discovered through the save-time version check.
+ *
+ * Instead, this accepts the mocked connection (Playwright auto-opens it
+ * because the handler never calls `connectToServer()`) and never sends a
+ * message and never closes it. The app's watcher socket sits open but
+ * silent for the lifetime of the test: no `change` message, no unexpected
+ * close, no reconnect, no resync race. That is the faithful WS analogue of
+ * the SSE abort's actual effect on the app: the live watch stream never
+ * tells the app about the external file change.
+ */
+export async function blockMarkdownFileWatchSocket(page: Page) {
+  await page.routeWebSocket("**/api/markdown-file/events**", () => {
+    // Intentionally empty: mock the connection, deliver nothing.
+  });
+}
+
 export async function appendInCodeEditor(page: Page, text: string) {
   const editor = codeEditor(page);
   await expect(editor).toBeVisible();

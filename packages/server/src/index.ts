@@ -17,6 +17,8 @@ import {
 } from "./network.js";
 import { ReviewEventQueue } from "./review-events.js";
 import { resolveUpdateStatus } from "./update-status.js";
+import { WebSocket } from "ws";
+import { createWsLayer, type WsLayer } from "./ws.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const staticDir = path.resolve(__dirname, "../../app/dist");
@@ -72,12 +74,18 @@ interface CreateAppOptions {
 interface CreateAppResult {
   app: Express;
   port: number;
+  /**
+   * Attach the app's WebSocket upgrade handler to an http.Server. createServer()
+   * calls this for every server instance in the bindHosts map so no bind host
+   * silently loses WebSocket support. WS routes are registered in later units.
+   */
+  handleUpgrade: WsLayer["handleUpgrade"];
 }
 
 interface OpenRequestClient {
   id: number;
   path: string | null;
-  response: Response;
+  socket: WebSocket;
 }
 
 interface OpenRequestPayload {
@@ -266,6 +274,70 @@ function isExistingDirectory(dir: string): boolean {
   }
 }
 
+/**
+ * WebSocket application close codes for the markdown-file events route. The SSE
+ * predecessor answered validation failures with an HTTP status; a WS upgrade
+ * has already completed by the time the connection handler validates, so
+ * failures close the socket with these codes instead (private-use range
+ * 4000-4999). They mirror the SSE status codes: 4400 ← 400, 4404 ← 404.
+ */
+const WS_CLOSE_INVALID_REQUEST = 4400;
+const WS_CLOSE_NOT_FOUND = 4404;
+
+type MarkdownWatchResolution =
+  | { ok: true; relativePath: string; absolutePath: string }
+  | { ok: false; code: number; reason: string };
+
+/**
+ * Validate the markdown-file watch target from raw query values. This mirrors
+ * the SSE handler's chain exactly — projectDirFromRequest semantics
+ * (projectPath required, resolved, must be an existing directory), the .md
+ * suffix check, and the existence check — but returns a value result instead of
+ * writing to an Express Response, so the WS route can map failures onto close
+ * codes. Reason strings are kept identical to the SSE JSON error messages.
+ */
+function resolveMarkdownWatchTarget(
+  projectPathRaw: string | null,
+  relativePathRaw: string,
+): MarkdownWatchResolution {
+  const nextProjectPath = projectPathRaw?.trim();
+  if (!nextProjectPath) {
+    return {
+      ok: false,
+      code: WS_CLOSE_INVALID_REQUEST,
+      reason: "projectPath is required",
+    };
+  }
+
+  const resolvedProjectDir = path.resolve(nextProjectPath);
+  if (!isExistingDirectory(resolvedProjectDir)) {
+    return {
+      ok: false,
+      code: WS_CLOSE_NOT_FOUND,
+      reason: "Project directory not found",
+    };
+  }
+
+  const absolutePath = ensureProjectPath(resolvedProjectDir, relativePathRaw);
+  if (!absolutePath?.toLowerCase().endsWith(".md")) {
+    return {
+      ok: false,
+      code: WS_CLOSE_NOT_FOUND,
+      reason: "Markdown file not found",
+    };
+  }
+
+  if (!fs.existsSync(absolutePath)) {
+    return {
+      ok: false,
+      code: WS_CLOSE_NOT_FOUND,
+      reason: "Markdown file not found",
+    };
+  }
+
+  return { ok: true, relativePath: relativePathRaw, absolutePath };
+}
+
 function listDirectories(dir: string): DirectoryListing {
   const entries = fs
     .readdirSync(dir, { withFileTypes: true })
@@ -404,6 +476,10 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       ? options.remoteDocumentToken
       : null;
   const app = express();
+  // Shared WebSocket layer for this app instance. Endpoint routes are
+  // registered by later units; createServer() attaches handleUpgrade to every
+  // http.Server it creates.
+  const wsLayer = createWsLayer();
   const openRequestClients = new Set<OpenRequestClient>();
   const reviewEvents = new ReviewEventQueue();
   const remoteSessions = new Map<string, RemoteSession>();
@@ -568,38 +644,40 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     res.json(markdownPageFromFile(relativePath, absolutePath));
   });
 
-  app.get("/api/markdown-file/events", (req, res) => {
-    const projectDir = projectDirFromRequest(req, res);
-    if (!projectDir) return;
+  // File-change stream (was SSE GET /api/markdown-file/events). Migrated to a
+  // WebSocket route on the shared Unit 1 layer. The upgrade has already
+  // completed by the time this runs, so validation failures close the socket
+  // with an application close code instead of an HTTP status. fs.watchFile and
+  // its change-detection guard are unchanged from the SSE version; only the
+  // delivery transport (socket.send vs res.write) and the added `type`
+  // discriminator differ.
+  wsLayer.registerRoute("/api/markdown-file/events", (socket, req) => {
+    const { searchParams } = new URL(req.url ?? "/", "http://localhost");
+    const resolution = resolveMarkdownWatchTarget(
+      searchParams.get("projectPath"),
+      searchParams.get("path") ?? "",
+    );
 
-    const relativePath =
-      typeof req.query.path === "string" ? req.query.path : "";
-    const absolutePath = ensureProjectPath(projectDir, relativePath);
-
-    if (!absolutePath?.toLowerCase().endsWith(".md")) {
-      res.status(404).json({ error: "Markdown file not found" });
+    if (!resolution.ok) {
+      socket.close(resolution.code, resolution.reason);
       return;
     }
 
-    if (!fs.existsSync(absolutePath)) {
-      res.status(404).json({ error: "Markdown file not found" });
-      return;
-    }
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.flushHeaders?.();
-    res.write("retry: 1000\n\n");
+    const { relativePath, absolutePath } = resolution;
 
     const sendChange = (stats: fs.Stats) => {
+      // Guard against delivery after the peer has gone (e.g. heartbeat
+      // terminate) but before the close handler unwatches — send-on-closed
+      // would throw inside the watcher callback.
+      if (socket.readyState !== WebSocket.OPEN) return;
       const exists = stats.nlink > 0;
-      res.write(
-        `event: change\ndata: ${JSON.stringify({
+      socket.send(
+        JSON.stringify({
+          type: "change",
           path: relativePath,
           exists,
           version: exists ? fileVersionFromFile(absolutePath) : null,
-        })}\n\n`,
+        }),
       );
     };
 
@@ -617,7 +695,10 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
 
     fs.watchFile(absolutePath, { interval: 500 }, listener);
 
-    req.on("close", () => {
+    // Clean up on every close path (client close, heartbeat terminate). This is
+    // the only watcher-teardown site, so a fired close event guarantees no
+    // leaked fs.watchFile registration.
+    socket.on("close", () => {
       fs.unwatchFile(absolutePath, listener);
     });
   });
@@ -819,33 +900,30 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     });
   });
 
-  app.get("/api/open-requests", (req, res) => {
+  // Open-request listener stream (was SSE GET /api/open-requests). Migrated to a
+  // WebSocket route on the shared Unit 1 layer. A tab registers here; the CLI's
+  // POST /api/open-request (still HTTP) delivers a navigation to the
+  // most-recently-registered listener whose `path` matches. Heartbeat now comes
+  // from the Unit 1 ping/pong, so the bespoke 15s comment keep-alive is gone.
+  wsLayer.registerRoute("/api/open-requests", (socket, req) => {
+    const { searchParams } = new URL(req.url ?? "/", "http://localhost");
+    const rawPath = searchParams.get("path");
     const requestedPath =
-      typeof req.query.path === "string" && req.query.path.trim().length > 0
-        ? req.query.path.trim()
-        : null;
+      rawPath !== null && rawPath.trim().length > 0 ? rawPath.trim() : null;
     const client: OpenRequestClient = {
       id: nextOpenRequestClientId,
       path: requestedPath,
-      response: res,
+      socket,
     };
     nextOpenRequestClientId += 1;
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.flushHeaders?.();
-    res.write(
-      `event: connected\ndata: ${JSON.stringify({ id: client.id })}\n\n`,
-    );
-
+    socket.send(JSON.stringify({ type: "connected", id: client.id }));
     openRequestClients.add(client);
-    const keepAlive = setInterval(() => {
-      res.write(": keep-alive\n\n");
-    }, 15_000);
 
-    req.on("close", () => {
-      clearInterval(keepAlive);
+    // Removing on close before any subsequent POST runs its lookup is what keeps
+    // a departed tab from being selected as the delivery target (delivered:false
+    // instead of a write to a dead socket).
+    socket.on("close", () => {
       openRequestClients.delete(client);
     });
   });
@@ -875,11 +953,12 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       return;
     }
 
-    matchingClient.response.write(
-      `event: open-request\ndata: ${JSON.stringify({
+    matchingClient.socket.send(
+      JSON.stringify({
+        type: "open-request",
         path: targetPath,
         url: targetUrl,
-      })}\n\n`,
+      }),
     );
     res.json({ delivered: true });
   });
@@ -1234,7 +1313,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     res.sendFile(path.join(staticDirPath, "index.html"));
   });
 
-  return { app, port };
+  return { app, port, handleUpgrade: wsLayer.handleUpgrade };
 }
 
 export const ROUGHDRAFT_TOKEN_ENV = "ROUGHDRAFT_TOKEN";
@@ -1258,7 +1337,7 @@ export async function createServer(
     );
   }
 
-  const { app } = createApp({
+  const { app, handleUpgrade } = createApp({
     port,
     projectDir,
     remoteDocumentToken:
@@ -1271,6 +1350,10 @@ export async function createServer(
       (host) =>
         new Promise<void>((resolve, reject) => {
           const server = createHttpServer(app);
+          // Attach the WS upgrade handler to THIS instance. One http.Server is
+          // created per bind host, so every instance needs its own attachment
+          // or non-default bind hosts silently lose WebSocket support.
+          handleUpgrade(server);
 
           server.once("error", (error: NodeJS.ErrnoException) => {
             if (
