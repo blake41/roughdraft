@@ -16,6 +16,7 @@
     "start": "./scripts/run.sh",
     "dev": "node scripts/dev.mjs",
     "dev:install-cli": "node scripts/install-dev-cli.mjs",
+    "postinstall": "bash scripts/prepare-install.sh",
     "dev:web": "node scripts/dev-web.mjs",
     "lint": "biome check . --assist-enabled=false",
     "lint:fix": "biome check --write . --assist-enabled=false",
