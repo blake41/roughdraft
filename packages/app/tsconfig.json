@@ -11,8 +11,7 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist",
-    "declaration": true,
+    "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src"],
