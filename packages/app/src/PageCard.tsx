@@ -1892,7 +1892,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     "document-page-main w-full min-w-0",
     layout === "embedded-demo"
       ? "max-w-none"
-      : "review-layout-main max-w-[46.5rem]",
+      : "review-layout-main max-w-[67.5rem]",
   );
   const contentInsetClass = layout === "embedded-demo" ? "pb-0" : "pb-24";
   const fallbackClass = cn(
@@ -2050,7 +2050,7 @@ const CodeEditorSurface = memo(function CodeEditorSurface({
     "document-page-main w-full min-w-0",
     layout === "embedded-demo"
       ? "max-w-none"
-      : "review-layout-main max-w-[46.5rem]",
+      : "review-layout-main max-w-[67.5rem]",
   );
   const contentInsetClass = layout === "embedded-demo" ? "pb-0" : "pb-24";
   const reviewRailClass = cn(

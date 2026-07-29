@@ -987,7 +987,7 @@ export function DocumentWorkspace({
                 "review-layout-grid--centered document-page-shell-no-comments",
             )}
           >
-            <div className="review-layout-main document-page-main w-full max-w-[46.5rem] min-w-0">
+            <div className="review-layout-main document-page-main w-full max-w-[67.5rem] min-w-0">
               <div className="flex w-full flex-wrap items-center gap-1.5 px-1">
                 <Tooltip>
                   <TooltipTrigger
