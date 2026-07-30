@@ -1675,6 +1675,72 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).not.toHaveBeenCalled();
   });
 
+  it("preserves an in-progress reply draft when external page content changes mid-composition", async () => {
+    const content =
+      '{==alpha==}{>>Root comment<<}{id="root" by="user" at="2026-04-25T23:56:00.000Z"}\n\nParagraph';
+    const rendered = await renderPageCard({
+      page: {
+        id: "doc-draft-survive-external-1",
+        title: "Doc Draft Survive External 1",
+        content,
+      },
+      selected: true,
+    });
+
+    await selectText(rendered.getEditor(), "alpha");
+
+    const replyButton = getByTestId<HTMLButtonElement>(
+      rendered.container,
+      "comment-banner-root-action-reply",
+    );
+
+    vi.useFakeTimers();
+    await act(async () => {
+      replyButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flushReact();
+    await flushReact();
+
+    const replyEditor = queryByTestId<HTMLTextAreaElement>(
+      rendered.container,
+      "comment-banner-c1-editor",
+    );
+    expect(replyEditor).not.toBeNull();
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(replyEditor, "In-progress reply text");
+      replyEditor?.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    });
+
+    expect(rendered.onSave).not.toHaveBeenCalled();
+
+    // Simulate an external file write landing while the reply draft is open,
+    // e.g. an AI agent actively saving edits over the websocket file-watch
+    // channel while the user is composing a reply.
+    await rendered.rerender({
+      page: {
+        id: "doc-draft-survive-external-1",
+        title: "Doc Draft Survive External 1",
+        content: `${content}\n\nExternally appended paragraph.`,
+      },
+    });
+
+    const replyEditorAfterExternalChange = queryByTestId<HTMLTextAreaElement>(
+      rendered.container,
+      "comment-banner-c1-editor",
+    );
+
+    expect(replyEditorAfterExternalChange).not.toBeNull();
+    expect(replyEditorAfterExternalChange?.value).toBe(
+      "In-progress reply text",
+    );
+  });
+
   it("deletes a whole root comment thread from the thread action", async () => {
     const rendered = await renderPageCard({
       page: {

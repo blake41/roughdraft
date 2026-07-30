@@ -102,6 +102,14 @@ interface RichTextEditorSurfaceProps {
   backend: StorageBackend;
   onEditorReady?: (editor: Editor | null) => void;
   onCommentRailPresenceChange?: (hasCommentRailSpace: boolean) => void;
+  /**
+   * Reports whether the user currently has an open comment/reply draft
+   * with real, uncommitted text anywhere in this editor surface (banner
+   * fallback or review rail). Used by PageCardEditorSurface to defer
+   * accepting external page.content updates while a draft is open, so an
+   * in-progress reply isn't silently wiped by a remount.
+   */
+  onDraftStateChange?: (hasOpenDraft: boolean) => void;
 }
 
 interface CodeEditorSurfaceProps {
@@ -601,6 +609,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   backend,
   onEditorReady,
   onCommentRailPresenceChange,
+  onDraftStateChange,
 }: RichTextEditorSurfaceProps) {
   const editorRef = useRef<Editor | null>(null);
   const criticChangeFrameRef = useRef<number | null>(null);
@@ -625,6 +634,13 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     string | null
   >(null);
   const [newCommentDraftIds, setNewCommentDraftIds] = useState<string[]>([]);
+  const [fallbackHasOpenDraft, setFallbackHasOpenDraft] = useState(false);
+  const [railHasOpenDraft, setRailHasOpenDraft] = useState(false);
+  const hasOpenCommentDraft = fallbackHasOpenDraft || railHasOpenDraft;
+
+  useEffect(() => {
+    onDraftStateChange?.(hasOpenCommentDraft);
+  }, [hasOpenCommentDraft, onDraftStateChange]);
 
   const resolveFileUrl = useCallback(
     (path: string) => backend.resolveFileUrl(path),
@@ -1941,6 +1957,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
                   current === commentId ? null : current,
                 );
               }}
+              onDraftStateChange={setFallbackHasOpenDraft}
             />
           ) : null}
           <div className={contentInsetClass}>
@@ -2023,6 +2040,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
           onApplyDraftSuggestion={applyDraftSuggestion}
           onCancelDraftSuggestion={() => setDraftSuggestion(null)}
           editor={editor}
+          onDraftStateChange={setRailHasOpenDraft}
         />
       </div>
     </div>
@@ -2129,6 +2147,20 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     page.content,
   );
   const [richTextSourceVersion, setRichTextSourceVersion] = useState(0);
+  // Tracks "the user has an open comment/reply draft with real, uncommitted
+  // text" as a SEPARATE signal from localDirtyRef. Comment/reply drafts are
+  // deliberately kept out of the markdown-edit dirty flow (see
+  // suppressNextMarkdownUpdateRef in RichTextEditorSurface) so they don't
+  // trigger autosave or flip the "document changed" state consumed by
+  // DocumentWorkspace's review-handoff button. We still need to defer
+  // external page.content updates while a draft is open, so this state is
+  // OR'd into the same external-update gates as localDirtyRef without
+  // changing what localDirtyRef itself means.
+  const [hasOpenCommentDraft, setHasOpenCommentDraft] = useState(false);
+
+  const handleCommentDraftStateChange = useCallback((hasDraft: boolean) => {
+    setHasOpenCommentDraft(hasDraft);
+  }, []);
 
   const reportDirtyState = useCallback(
     (isDirty: boolean) => {
@@ -2288,7 +2320,10 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
       return;
     }
 
-    if (localDirtyRef.current && markdown !== page.content) {
+    if (
+      (localDirtyRef.current || hasOpenCommentDraft) &&
+      markdown !== page.content
+    ) {
       return;
     }
 
@@ -2300,7 +2335,14 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     }
 
     acceptMarkdown(page.content);
-  }, [acceptMarkdown, forceResetKey, markdown, page.content, reportDirtyState]);
+  }, [
+    acceptMarkdown,
+    forceResetKey,
+    hasOpenCommentDraft,
+    markdown,
+    page.content,
+    reportDirtyState,
+  ]);
 
   useEffect(() => {
     if (!saveBlocked || !saveTimer.current) return;
@@ -2357,6 +2399,7 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
 
   const effectiveRichTextSourceMarkdown =
     !localDirtyRef.current &&
+    !hasOpenCommentDraft &&
     !recentMarkdownRef.current.has(page.content) &&
     markdown !== page.content
       ? page.content
@@ -2376,6 +2419,7 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
       onCommentRailPresenceChange={onCommentRailPresenceChange}
       backend={backend}
       onEditorReady={onEditorReady}
+      onDraftStateChange={handleCommentDraftStateChange}
     />
   );
 });

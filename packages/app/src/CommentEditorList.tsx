@@ -44,6 +44,15 @@ interface CommentEditorListProps {
   getCommentActions?: (
     context: CommentActionsRenderContext,
   ) => CommentActionDefinition[];
+  /**
+   * Reports whether this list currently has at least one comment/reply
+   * draft with real, uncommitted text (i.e. non-empty and different from
+   * whatever is already persisted for that comment id). An empty,
+   * untouched new-comment box does NOT count — only actual typed content
+   * does. Callers use this to defer external content updates while the
+   * user is mid-composition instead of silently wiping the draft.
+   */
+  onDraftStateChange?: (hasOpenDraft: boolean) => void;
 }
 
 export interface CommentActionDefinition {
@@ -109,6 +118,7 @@ export function CommentEditorList({
   onAutoFocusComment,
   renderCommentContent,
   getCommentActions,
+  onDraftStateChange,
 }: CommentEditorListProps) {
   const textareaRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -118,6 +128,27 @@ export function CommentEditorList({
     () => new Map(comments.map((comment) => [comment.id, comment])),
     [comments],
   );
+  const hasOpenDraft = useMemo(
+    () =>
+      editingCommentIds.some((commentId) => {
+        const comment = commentMap.get(commentId);
+        if (!comment) return false;
+
+        const draftText = (drafts[commentId] ?? comment.content).trim();
+        if (draftText.length === 0) return false;
+
+        return draftText !== comment.content.trim();
+      }),
+    [commentMap, drafts, editingCommentIds],
+  );
+
+  useEffect(() => {
+    onDraftStateChange?.(hasOpenDraft);
+
+    return () => {
+      onDraftStateChange?.(false);
+    };
+  }, [hasOpenDraft, onDraftStateChange]);
   const hasActiveSelection =
     !!selectedCommentId &&
     comments.some((comment) => comment.id === selectedCommentId);

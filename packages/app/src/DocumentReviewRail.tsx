@@ -78,6 +78,7 @@ interface DocumentReviewRailProps {
   onApplyDraftSuggestion?: () => void;
   onCancelDraftSuggestion?: () => void;
   editor?: Editor | null;
+  onDraftStateChange?: (hasOpenDraft: boolean) => void;
 }
 
 function railLayoutItemClass(layout: "anchored" | "flow") {
@@ -214,10 +215,29 @@ export function DocumentReviewRail({
   onApplyDraftSuggestion,
   onCancelDraftSuggestion,
   editor = null,
+  onDraftStateChange,
 }: DocumentReviewRailProps) {
   const draftTextareaRef = useRef<HTMLTextAreaElement>(null);
   const itemRefs = useRef(new Map<string, HTMLDivElement>());
   const [itemHeights, setItemHeights] = useState<Record<string, number>>({});
+  const openDraftKeysRef = useRef(new Set<string>());
+  const [hasAnyOpenDraft, setHasAnyOpenDraft] = useState(false);
+
+  const reportDraftState = useCallback((key: string, hasDraft: boolean) => {
+    const openKeys = openDraftKeysRef.current;
+    if (hasDraft) {
+      openKeys.add(key);
+    } else {
+      openKeys.delete(key);
+    }
+
+    const next = openKeys.size > 0;
+    setHasAnyOpenDraft((current) => (current === next ? current : next));
+  }, []);
+
+  useEffect(() => {
+    onDraftStateChange?.(hasAnyOpenDraft);
+  }, [hasAnyOpenDraft, onDraftStateChange]);
 
   const activeRootThreadId = useMemo(
     () => getRootThreadIdForCommentId(selectedCommentId, comments),
@@ -484,6 +504,9 @@ export function DocumentReviewRail({
                   pendingFocusCommentId={pendingFocusCommentId}
                   newCommentDraftIds={newCommentDraftIds}
                   onAutoFocusComment={onAutoFocusComment}
+                  onDraftStateChange={(hasDraft) =>
+                    reportDraftState(layout.key, hasDraft)
+                  }
                 />
               </div>
             );
@@ -715,6 +738,9 @@ export function DocumentReviewRail({
                 onAutoFocusComment={onAutoFocusComment}
                 renderCommentContent={renderCommentContent}
                 getCommentActions={getCommentActions}
+                onDraftStateChange={(hasDraft) =>
+                  reportDraftState(layout.key, hasDraft)
+                }
               />
             </div>
           );
