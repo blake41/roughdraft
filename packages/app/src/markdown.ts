@@ -114,8 +114,72 @@ function protectPipeSensitiveTables(markdown: string): string {
 
 export function protectRichTextRoundTripMarkdown(markdown: string): string {
   return protectPipeSensitiveTables(
-    protectIndentedCodeAfterLists(protectRawHtmlBlocks(markdown)),
+    protectIndentedCodeAfterLists(
+      protectCriticMarkupBlankLines(protectRawHtmlBlocks(markdown)),
+    ),
   );
+}
+
+/**
+ * marked block-tokenizes on blank lines before any inline tokenizer (including
+ * the CriticMarkup one) ever runs, so a `{==...==}`/`{>>...<<}`/`{++...++}`/
+ * `{--...--}`/`{~~...~~}` span containing an embedded blank line gets torn
+ * across the resulting paragraph boundary and never matches as one span — the
+ * opening half can't find its closing delimiter within the same paragraph, so
+ * the whole thing falls through as literal text. Swap embedded blank lines
+ * inside these spans for an invisible sentinel line (not `\s`, so marked's
+ * paragraph-break check doesn't fire) before parsing; critic-markup/index.ts
+ * strips the sentinel back out wherever it extracts final text from a match.
+ */
+export const CRITIC_MARKUP_BLANK_LINE_SENTINEL = "⁣";
+
+function protectBlankLinesInSpans(
+  markdown: string,
+  pattern: RegExp,
+  wrap: (body: string) => string,
+): string {
+  return markdown.replace(pattern, (_whole, body: string) => wrap(body));
+}
+
+function protectSpanBody(body: string): string {
+  return body.replace(
+    /\n([ \t]*)\n/g,
+    `\n$1${CRITIC_MARKUP_BLANK_LINE_SENTINEL}\n`,
+  );
+}
+
+function protectCriticMarkupBlankLines(markdown: string): string {
+  let result = markdown;
+  result = protectBlankLinesInSpans(
+    result,
+    /\{==([\s\S]*?)==\}/g,
+    (body) => `{==${protectSpanBody(body)}==}`,
+  );
+  result = protectBlankLinesInSpans(
+    result,
+    /\{>>([\s\S]*?)<<\}/g,
+    (body) => `{>>${protectSpanBody(body)}<<}`,
+  );
+  result = protectBlankLinesInSpans(
+    result,
+    /\{\+\+([\s\S]*?)\+\+\}/g,
+    (body) => `{++${protectSpanBody(body)}++}`,
+  );
+  result = protectBlankLinesInSpans(
+    result,
+    /\{--([\s\S]*?)--\}/g,
+    (body) => `{--${protectSpanBody(body)}--}`,
+  );
+  result = protectBlankLinesInSpans(
+    result,
+    /\{~~([\s\S]*?)~~\}/g,
+    (body) => `{~~${protectSpanBody(body)}~~}`,
+  );
+  return result;
+}
+
+export function stripCriticMarkupBlankLineSentinel(text: string): string {
+  return text.replaceAll(CRITIC_MARKUP_BLANK_LINE_SENTINEL, "");
 }
 
 function normalizeMarkdownPath(path: string): string {

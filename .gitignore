@@ -16,3 +16,4 @@ sandbox
 .roughdraft-state
 /roughdraft.json
 .compound-engineering/*.local.yaml
+.baton/

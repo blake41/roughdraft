@@ -97,6 +97,38 @@ describe("CriticMarkup comments", () => {
     expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
   });
 
+  it("parses a comment whose body contains a blank line instead of leaking raw CriticMarkup text", () => {
+    const input =
+      'This is {==highlighted==}{>>first paragraph\n\nsecond paragraph<<}{id="cmt1" by="user" at="2024-01-15T10:30:00.000Z"} text.\n';
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+
+    expect(comments.get("cmt1")).toMatchObject({
+      id: "cmt1",
+      content: "first paragraph\n\nsecond paragraph",
+    });
+    const docText = JSON.stringify(doc);
+    expect(docText).not.toContain("{==");
+    expect(docText).not.toContain("{>>");
+    expect(docText).not.toContain("⁣");
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("parses two comment/reply blocks stacked with no gap between them", () => {
+    const input =
+      'This is {==highlighted==}{>>root comment<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>a reply<<}{id="c2" by="AI" at="2024-01-15T10:31:00.000Z" re="c1"} text.\n';
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+
+    expect(comments.get("c1")).toMatchObject({ content: "root comment" });
+    expect(comments.get("c2")).toMatchObject({
+      content: "a reply",
+      parentCommentId: "c1",
+    });
+    expect(JSON.stringify(doc)).not.toContain("{>>");
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
   it("renders YAML endmatter-backed root comments and replies", () => {
     const input = [
       "This is {==highlighted==}{>>comment text<<}{#c1} text.",

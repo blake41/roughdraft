@@ -22,6 +22,7 @@ import {
   prependYamlFrontmatter,
   protectRichTextRoundTripMarkdown,
   splitYamlDocumentMetadata,
+  stripCriticMarkupBlankLineSentinel,
   type MarkdownOptions,
 } from "../markdown";
 
@@ -477,7 +478,7 @@ function createCommentWithContext(
 
   return {
     id: partial?.id ?? createNextCommentId(existingComments),
-    content: partial?.content ?? "",
+    content: stripCriticMarkupBlankLineSentinel(partial?.content ?? ""),
     createdAt: partial?.createdAt ?? new Date().toISOString(),
     authorType,
     authorId: partial?.authorId ?? (authorType === "ai" ? null : "user"),
@@ -673,7 +674,7 @@ function tokenizeCriticCommentAnchor(
 
   if (!anchorMatch) return undefined;
 
-  const [, anchor] = anchorMatch;
+  const anchor = stripCriticMarkupBlankLineSentinel(anchorMatch[1] ?? "");
   let raw = anchorMatch[0];
   let offset = raw.length;
   const parsedComments: CriticComment[] = [];
@@ -835,7 +836,7 @@ function tokenizeCriticChange(
   const additionMatch = src.match(criticAdditionPattern);
 
   if (additionMatch) {
-    const [, text] = additionMatch;
+    const text = stripCriticMarkupBlankLineSentinel(additionMatch[1] ?? "");
     const metadata = getTrailingAttributeMetadata(src, additionMatch[0].length);
     const trailingComments = tokenizeCriticCommentBlocks(
       src,
@@ -864,7 +865,7 @@ function tokenizeCriticChange(
   const deletionMatch = src.match(criticDeletionPattern);
 
   if (deletionMatch) {
-    const [, text] = deletionMatch;
+    const text = stripCriticMarkupBlankLineSentinel(deletionMatch[1] ?? "");
     const metadata = getTrailingAttributeMetadata(src, deletionMatch[0].length);
     const trailingComments = tokenizeCriticCommentBlocks(
       src,
@@ -893,7 +894,12 @@ function tokenizeCriticChange(
   const substitutionMatch = src.match(criticSubstitutionPattern);
 
   if (substitutionMatch) {
-    const [, oldText, newText] = substitutionMatch;
+    const oldText = stripCriticMarkupBlankLineSentinel(
+      substitutionMatch[1] ?? "",
+    );
+    const newText = stripCriticMarkupBlankLineSentinel(
+      substitutionMatch[2] ?? "",
+    );
     const metadata = getTrailingAttributeMetadata(
       src,
       substitutionMatch[0].length,
@@ -965,7 +971,7 @@ function renderCriticCodeText(
       continue;
     }
 
-    const [, anchor] = anchorMatch;
+    const anchor = stripCriticMarkupBlankLineSentinel(anchorMatch[1] ?? "");
     let nextOffset = offset + anchorMatch[0].length;
     const parsedComments: CriticComment[] = [];
 
