@@ -1320,18 +1320,67 @@ function escapeMetadataAttributeValue(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
-function nextCommentId(items: RfmReviewItem[]): string {
-  let maxId = 0;
+const ID_TOKEN_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
+const ID_TOKEN_LENGTH = 6;
+const ID_COLLISION_RETRIES = 8;
 
-  for (const item of items) {
-    const match = item.id.match(/^c(\d+)$/);
-    if (!match) continue;
+/**
+ * Minimal Web Crypto surface.
+ *
+ * This package deliberately carries no `@types/node`, so `node:crypto` is not
+ * importable here. `globalThis.crypto` is the portable equivalent — present in
+ * Node 18+ and in every browser/bundler target — and needs no extra types.
+ */
+interface RandomValuesSource {
+  getRandomValues(target: Uint8Array): Uint8Array;
+}
 
-    const parsed = Number.parseInt(match[1] ?? "0", 10);
-    maxId = Math.max(maxId, parsed);
+function createRandomIdToken(length: number): string {
+  const source = (globalThis as { crypto?: RandomValuesSource }).crypto;
+  if (typeof source?.getRandomValues !== "function") {
+    throw new Error(
+      "Cannot allocate a review id: Web Crypto getRandomValues is unavailable.",
+    );
   }
 
-  return `c${maxId + 1}`;
+  const bytes = new Uint8Array(length);
+  source.getRandomValues(bytes);
+
+  let token = "";
+  for (const byte of bytes) {
+    token += ID_TOKEN_ALPHABET[byte % ID_TOKEN_ALPHABET.length];
+  }
+
+  return token;
+}
+
+/**
+ * Allocate a document-local comment id as `c` + random base36 token.
+ *
+ * Mirrors the browser-side allocator in
+ * packages/app/src/critic-markup/index.ts . The previous "current max + 1"
+ * scheme collided whenever this package and the browser UI appended to the
+ * same document from different snapshots — both produced `c2` and one comment
+ * silently overwrote the other. `items` is still consulted defensively so an
+ * id already in the document is never reused.
+ */
+function nextCommentId(items: RfmReviewItem[]): string {
+  const taken = new Set(items.map((item) => item.id));
+
+  for (let attempt = 0; attempt < ID_COLLISION_RETRIES; attempt += 1) {
+    const candidate = `c${createRandomIdToken(ID_TOKEN_LENGTH)}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+
+  // Unreachable in practice (36^6 keyspace). Widening with a counter keeps
+  // this terminating rather than looping on a degenerate random source.
+  const base = `c${createRandomIdToken(ID_TOKEN_LENGTH)}`;
+  let suffix = 0;
+  while (taken.has(`${base}${suffix.toString(36)}`)) {
+    suffix += 1;
+  }
+
+  return `${base}${suffix.toString(36)}`;
 }
 
 function findCanonicalMetadataStart(

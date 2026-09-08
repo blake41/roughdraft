@@ -95,6 +95,32 @@ function createBackend(): StorageBackend {
   };
 }
 
+/**
+ * Read back the id of the first criticChange mark in the document.
+ *
+ * Freshly allocated suggestion ids carry a random suffix (see
+ * createNextChangeId), so a test that just caused a suggestion to be created
+ * has to discover its id rather than assume `s1`.
+ */
+function findFirstCriticChangeId(editor: Editor): string {
+  let changeId: string | null = null;
+
+  editor.state.doc.descendants((node) => {
+    if (changeId) return false;
+
+    for (const mark of node.marks) {
+      if (mark.type.name !== "criticChange") continue;
+      if (typeof mark.attrs.changeId !== "string") continue;
+
+      changeId = mark.attrs.changeId;
+      return false;
+    }
+  });
+
+  expect(changeId).not.toBeNull();
+  return changeId as unknown as string;
+}
+
 function findTextRange(editor: Editor, text: string) {
   let range: { from: number; to: number } | null = null;
 
@@ -244,6 +270,26 @@ function queryByTestId<T extends Element = HTMLElement>(
   return container.querySelector<T>(`[data-testid="${testId}"]`);
 }
 
+/**
+ * Locate an element by a data-testid PATTERN rather than an exact id.
+ *
+ * Freshly allocated comment/suggestion ids carry a random suffix (see
+ * createNextCommentId), so tests can no longer assume the next id is `c1`.
+ * Uses getElementsByTagName rather than a querySelector attribute-prefix
+ * selector so scripts/check-test-selectors.mjs stays satisfied.
+ */
+function queryByTestIdMatching<T extends Element = HTMLElement>(
+  container: Element | Document,
+  pattern: RegExp,
+) {
+  for (const element of Array.from(container.getElementsByTagName("*"))) {
+    const testId = element.getAttribute("data-testid");
+    if (testId && pattern.test(testId)) return element as unknown as T;
+  }
+
+  return null;
+}
+
 function getByTestId<T extends Element = HTMLElement>(
   container: ParentNode,
   testId: string,
@@ -288,6 +334,15 @@ type RenderedPageCard = {
   rerender: (overrides?: PageCardTestOptions) => Promise<void>;
   unmount: () => Promise<void>;
 };
+
+/**
+ * onSave's third argument is the base (version + content) the outgoing save
+ * is derived from. Tests that only care about the saved content match it
+ * loosely; the version-pinning behavior has its own dedicated test.
+ */
+const saveBaseMatcher = expect.objectContaining({
+  content: expect.any(String),
+});
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -504,6 +559,7 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-1",
       expect.stringContaining("Start now"),
+      saveBaseMatcher,
     );
     expect(rendered.onSaveStateChange.mock.calls.at(-1)?.[0]).toBe("saved");
   });
@@ -533,6 +589,7 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-manual-save-rich-1",
       expect.stringContaining("Start now"),
+      saveBaseMatcher,
     );
 
     await act(async () => {
@@ -947,8 +1004,9 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-1",
       expect.stringMatching(
-        /^Start \{\+\+now\+\+\}\{id="s1" by="user" at="[^"]+"\}\n$/,
+        /^Start \{\+\+now\+\+\}\{id="s[0-9a-z]+" by="user" at="[^"]+"\}\n$/,
       ),
+      saveBaseMatcher,
     );
   });
 
@@ -982,8 +1040,9 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-grouped-insertion-1",
       expect.stringMatching(
-        /^Start-\{\+\+now\+\+\}\{id="s1" by="user" at="[^"]+"\}\n$/,
+        /^Start-\{\+\+now\+\+\}\{id="s[0-9a-z]+" by="user" at="[^"]+"\}\n$/,
       ),
+      saveBaseMatcher,
     );
   });
 
@@ -1017,8 +1076,9 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-2",
       expect.stringMatching(
-        /^Use \{~~old~>new~~\}\{id="s1" by="user" at="[^"]+"\} text\n$/,
+        /^Use \{~~old~>new~~\}\{id="s[0-9a-z]+" by="user" at="[^"]+"\} text\n$/,
       ),
+      saveBaseMatcher,
     );
   });
 
@@ -1046,8 +1106,9 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-grouped-replacement-1",
       expect.stringMatching(
-        /^Use \{~~old~>new~~\}\{id="s1" by="user" at="[^"]+"\} text\n$/,
+        /^Use \{~~old~>new~~\}\{id="s[0-9a-z]+" by="user" at="[^"]+"\} text\n$/,
       ),
+      saveBaseMatcher,
     );
   });
 
@@ -1084,8 +1145,9 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-repeated-delete-1",
       expect.stringMatching(
-        /^S\{--tar--\}\{id="s1" by="user" at="[^"]+"\}t\n$/,
+        /^S\{--tar--\}\{id="s[0-9a-z]+" by="user" at="[^"]+"\}t\n$/,
       ),
+      saveBaseMatcher,
     );
   });
 
@@ -1122,8 +1184,9 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-suggesting-enter-paragraph-1",
       expect.stringMatching(
-        /^Start\n\n\{\+\+\u2060\+\+\}\{id="s1" by="user" at="[^"]+"\}\n$/,
+        /^Start\n\n\{\+\+\u2060\+\+\}\{id="s[0-9a-z]+" by="user" at="[^"]+"\}\n$/,
       ),
+      saveBaseMatcher,
     );
   });
 
@@ -1144,7 +1207,9 @@ describe("PageCard editor integration", () => {
     });
     await pressEditorKey(acceptEditor, "Enter");
     await act(async () => {
-      acceptEditor.commands.acceptCriticChange("s1");
+      acceptEditor.commands.acceptCriticChange(
+        findFirstCriticChangeId(acceptEditor),
+      );
     });
 
     expect(acceptEditor.state.doc.childCount).toBe(2);
@@ -1166,7 +1231,9 @@ describe("PageCard editor integration", () => {
     });
     await pressEditorKey(rejectEditor, "Enter");
     await act(async () => {
-      rejectEditor.commands.rejectCriticChange("s1");
+      rejectEditor.commands.rejectCriticChange(
+        findFirstCriticChangeId(rejectEditor),
+      );
     });
 
     expect(rejectEditor.state.doc.childCount).toBe(1);
@@ -1439,7 +1506,7 @@ describe("PageCard editor integration", () => {
 
     const savedMarkdown = rendered.onSave.mock.calls[0]?.[1];
     expect(savedMarkdown).toMatch(
-      /^Plain \{\+\+now\+\+\}\{id="s1" by="user" at="[^"]+"\}\n$/,
+      /^Plain \{\+\+now\+\+\}\{id="s[0-9a-z]+" by="user" at="[^"]+"\}\n$/,
     );
     expect(savedMarkdown).not.toContain("---\ncomments:");
     expect(savedMarkdown).not.toContain("Needs a source.");
@@ -1572,9 +1639,9 @@ describe("PageCard editor integration", () => {
 
     vi.useFakeTimers();
 
-    const commentEditor = queryByTestId<HTMLTextAreaElement>(
+    const commentEditor = queryByTestIdMatching<HTMLTextAreaElement>(
       rendered.container,
-      "comment-banner-c1-editor",
+      /^comment-banner-c[^-]+-editor$/,
     );
     expect(commentEditor).not.toBeNull();
 
@@ -1595,9 +1662,9 @@ describe("PageCard editor integration", () => {
       commentEditor.dispatchEvent(new InputEvent("input", { bubbles: true }));
     });
 
-    const saveButton = queryByTestId<HTMLButtonElement>(
+    const saveButton = queryByTestIdMatching<HTMLButtonElement>(
       rendered.container,
-      "comment-banner-c1-action-save",
+      /^comment-banner-c[^-]+-action-save$/,
     );
     expect(saveButton).not.toBeNull();
     expect(saveButton?.className).toContain("rounded-xl");
@@ -1606,9 +1673,9 @@ describe("PageCard editor integration", () => {
     expect(saveButton?.className).toContain("w-full");
     expect(saveButton?.className).toContain("text-sm");
     expect(
-      queryByTestId<HTMLButtonElement>(
+      queryByTestIdMatching<HTMLButtonElement>(
         rendered.container,
-        "comment-banner-c1-action-cancel",
+        /^comment-banner-c[^-]+-action-cancel$/,
       ),
     ).toBeNull();
 
@@ -1624,8 +1691,9 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledWith(
       "doc-comment-empty-draft-1",
       expect.stringMatching(
-        /\{==target==\}\{>>Draft comment<<\}\{id="c1" by="user" at="[^"]+"\}/,
+        /\{==target==\}\{>>Draft comment<<\}\{id="c[0-9a-z]+" by="user" at="[^"]+"\}/,
       ),
+      saveBaseMatcher,
     );
   });
 
@@ -1661,9 +1729,9 @@ describe("PageCard editor integration", () => {
     await flushReact();
     await flushReact();
 
-    const replyEditor = queryByTestId<HTMLTextAreaElement>(
+    const replyEditor = queryByTestIdMatching<HTMLTextAreaElement>(
       rendered.container,
-      "comment-banner-c1-editor",
+      /^comment-banner-c[^-]+-editor$/,
     );
     expect(replyEditor).not.toBeNull();
 
@@ -1702,9 +1770,9 @@ describe("PageCard editor integration", () => {
     await flushReact();
     await flushReact();
 
-    const replyEditor = queryByTestId<HTMLTextAreaElement>(
+    const replyEditor = queryByTestIdMatching<HTMLTextAreaElement>(
       rendered.container,
-      "comment-banner-c1-editor",
+      /^comment-banner-c[^-]+-editor$/,
     );
     expect(replyEditor).not.toBeNull();
 
@@ -1730,15 +1798,92 @@ describe("PageCard editor integration", () => {
       },
     });
 
-    const replyEditorAfterExternalChange = queryByTestId<HTMLTextAreaElement>(
-      rendered.container,
-      "comment-banner-c1-editor",
-    );
+    const replyEditorAfterExternalChange =
+      queryByTestIdMatching<HTMLTextAreaElement>(
+        rendered.container,
+        /^comment-banner-c[^-]+-editor$/,
+      );
 
     expect(replyEditorAfterExternalChange).not.toBeNull();
     expect(replyEditorAfterExternalChange?.value).toBe(
       "In-progress reply text",
     );
+  });
+
+  it("saves a comment draft against the version the editor content actually reflects", async () => {
+    const content = "Comment target text\n\nSecond paragraph.";
+    const rendered = await renderPageCard({
+      page: {
+        id: "doc-comment-base-version-1",
+        title: "Doc Comment Base Version 1",
+        content,
+        version: "version-1",
+      },
+      selected: true,
+    });
+
+    await selectText(rendered.getEditor(), "target");
+    await addCommentWithShortcut();
+
+    vi.useFakeTimers();
+
+    const commentEditor = queryByTestIdMatching<HTMLTextAreaElement>(
+      rendered.container,
+      /^comment-banner-c[^-]+-editor$/,
+    );
+    expect(commentEditor).not.toBeNull();
+
+    await act(async () => {
+      if (!commentEditor) return;
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(commentEditor, "Draft comment");
+      commentEditor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    });
+
+    // An AI agent writes the file on disk while the draft is open. App
+    // refetches on the watcher event and re-renders with the new content and
+    // the new disk version. PageCardEditorSurface defers accepting that
+    // content (the draft would be wiped), so the version the editor content
+    // reflects is still version-1.
+    await rendered.rerender({
+      page: {
+        id: "doc-comment-base-version-1",
+        title: "Doc Comment Base Version 1",
+        content: `${content}\n\nParagraph appended by the agent.`,
+        version: "version-2",
+      },
+    });
+
+    const saveButton = queryByTestIdMatching<HTMLButtonElement>(
+      rendered.container,
+      /^comment-banner-c[^-]+-action-save$/,
+    );
+    expect(saveButton).not.toBeNull();
+
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+
+    expect(rendered.onSave).toHaveBeenCalledTimes(1);
+    const [savedId, savedContent, base] = rendered.onSave.mock.calls[0] as [
+      string,
+      string,
+      { version?: string; content: string } | undefined,
+    ];
+
+    expect(savedId).toBe("doc-comment-base-version-1");
+    expect(savedContent).toContain("Draft comment");
+    expect(savedContent).not.toContain("Paragraph appended by the agent.");
+    expect(base?.version).toBe("version-1");
+    expect(base?.content).toBe(content);
   });
 
   it("deletes a whole root comment thread from the thread action", async () => {
@@ -1909,9 +2054,9 @@ describe("PageCard editor integration", () => {
     await flushReact();
     await flushAnimationFrame();
 
-    const replyEditor = queryByTestId<HTMLTextAreaElement>(
+    const replyEditor = queryByTestIdMatching<HTMLTextAreaElement>(
       rendered.container,
-      "comment-rail-c1-editor",
+      /^comment-rail-c[^-]+-editor$/,
     );
     expect(replyEditor).not.toBeNull();
 
@@ -1925,9 +2070,9 @@ describe("PageCard editor integration", () => {
       await Promise.resolve();
     });
 
-    const saveButton = queryByTestId<HTMLButtonElement>(
+    const saveButton = queryByTestIdMatching<HTMLButtonElement>(
       rendered.container,
-      "comment-rail-c1-action-save",
+      /^comment-rail-c[^-]+-action-save$/,
     );
     expect(saveButton).not.toBeNull();
 
@@ -1944,7 +2089,8 @@ describe("PageCard editor integration", () => {
     const savedMarkdown = rendered.onSave.mock.calls[0]?.[1];
     expect(savedMarkdown).toContain("{++clearer wording++}{#s1}");
     expect(savedMarkdown).toContain("comments:");
-    expect(savedMarkdown).toContain("c1:");
+    // The reply id is freshly allocated, so match its shape rather than "c1".
+    expect(savedMarkdown).toMatch(/\n {2}c[0-9a-z]+:\n/);
     expect(savedMarkdown).toContain("body: Looks good.");
     expect(savedMarkdown).toContain("re: s1");
     expect(savedMarkdown).toContain("suggestions:");

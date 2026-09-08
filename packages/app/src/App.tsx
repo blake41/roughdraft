@@ -1421,7 +1421,13 @@ export function PreviewPage() {
   }, []);
 
   const handleSaveDocument = useCallback(
-    async (_id: string, content: string) => {
+    async (
+      _id: string,
+      content: string,
+      // PreviewBackend has no concurrent writer, so there is no version race
+      // to guard against here. Accepted to satisfy the prop type only.
+      _base?: { version?: string; content: string },
+    ) => {
       const savedPage = await backend.saveMarkdownFile(
         PREVIEW_DOCUMENT_PATH,
         content,
@@ -1505,6 +1511,10 @@ export function App() {
   const documentDirtyRef = useRef(false);
   const documentSaveStateRef = useRef<DocumentSaveState>("saved");
   const documentDraftContentRef = useRef<string | null>(null);
+  // The document version documentDraftContentRef's content is based on. Kept
+  // in lockstep with the draft content so any save derived from the draft
+  // carries the version that content actually reflects.
+  const documentDraftVersionRef = useRef<string | undefined>(undefined);
 
   backendRef.current = backend;
   documentPageRef.current = documentPage;
@@ -1514,6 +1524,7 @@ export function App() {
   const applyDocumentPage = useCallback((nextDocument: Page) => {
     setDocumentPage(nextDocument);
     documentDraftContentRef.current = nextDocument.content;
+    documentDraftVersionRef.current = nextDocument.version;
   }, []);
 
   const loadDocument = useCallback(
@@ -1675,12 +1686,22 @@ export function App() {
   ]);
 
   const handleSaveDocument = useCallback(
-    async (id: string, content: string) => {
+    async (
+      id: string,
+      content: string,
+      base: { version?: string; content: string },
+    ) => {
       if (!activeDocumentPath) return;
+      // Prefer the version the editor pinned alongside this exact content.
+      // documentPageRef may already have advanced past it (the file watcher
+      // refetched while the editor deferred accepting the new content), and
+      // saving stale content under a fresh version silently clobbers the
+      // concurrent writer's edit instead of raising a conflict.
       const expectedVersion =
-        documentPageRef.current?.id === id
+        base.version ??
+        (documentPageRef.current?.id === id
           ? documentPageRef.current.version
-          : undefined;
+          : undefined);
 
       let savedDocument: Page | undefined;
       try {
@@ -1725,9 +1746,13 @@ export function App() {
     [],
   );
 
-  const handleDocumentLocalContentChange = useCallback((markdown: string) => {
-    documentDraftContentRef.current = markdown;
-  }, []);
+  const handleDocumentLocalContentChange = useCallback(
+    (markdown: string, version?: string) => {
+      documentDraftContentRef.current = markdown;
+      documentDraftVersionRef.current = version;
+    },
+    [],
+  );
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -1808,7 +1833,11 @@ export function App() {
 
       const content =
         documentDraftContentRef.current ?? currentDocument.content;
-      const expectedVersion = currentDocument.version;
+      // Pin the version to the one the draft content is based on, mirroring
+      // PageCard's acceptedVersionRef. currentDocument.version may have
+      // advanced past the content the user actually reviewed.
+      const expectedVersion =
+        documentDraftVersionRef.current ?? currentDocument.version;
       const firstLine = content.split("\n")[0] || "";
       const fallbackTitle =
         currentDocument.id.split("/").at(-1) || currentDocument.id;

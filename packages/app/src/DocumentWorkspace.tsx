@@ -384,10 +384,14 @@ interface DocumentWorkspaceProps {
   documentFilenameLabel: string;
   documentEditorViewMode: DocumentEditorViewMode;
   onDocumentEditorViewModeChange: (mode: DocumentEditorViewMode) => void;
-  onSaveDocument: (id: string, content: string) => Promise<void>;
+  onSaveDocument: (
+    id: string,
+    content: string,
+    base: { version?: string; content: string },
+  ) => Promise<void>;
   onDocumentSaveStateChange: (state: DocumentSaveState) => void;
   onDocumentDirtyStateChange: (isDirty: boolean) => void;
-  onDocumentLocalContentChange: (markdown: string) => void;
+  onDocumentLocalContentChange: (markdown: string, version?: string) => void;
   documentDiskChangeState: DiskChangeState;
   documentForceResetKey: string | null;
   onReloadDocumentFromDisk: () => void | Promise<void>;

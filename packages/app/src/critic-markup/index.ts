@@ -404,40 +404,69 @@ function serializeReviewEndmatter(
   return `---\n${stringifyYaml(data)}`;
 }
 
+const ID_TOKEN_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
+const ID_TOKEN_LENGTH = 6;
+const ID_COLLISION_RETRIES = 8;
+
+function createRandomIdToken(length: number): string {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+
+  let token = "";
+  for (const byte of bytes) {
+    token += ID_TOKEN_ALPHABET[byte % ID_TOKEN_ALPHABET.length];
+  }
+
+  return token;
+}
+
+/**
+ * Allocate a document-local review id as prefix + random base36 token.
+ *
+ * The previous "current max + 1" scheme collided whenever two writers
+ * allocated from different snapshots of the same document — the browser and
+ * an AI agent editing the file concurrently both produced `c2`, and one
+ * comment silently overwrote the other. A random token makes concurrent
+ * allocation collision-free without any coordination. `taken` is still
+ * consulted defensively so an id already in the document is never reused.
+ */
+function createUniqueReviewId(prefix: string, taken: Set<string>): string {
+  for (let attempt = 0; attempt < ID_COLLISION_RETRIES; attempt += 1) {
+    const candidate = `${prefix}${createRandomIdToken(ID_TOKEN_LENGTH)}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+
+  // Unreachable in practice (36^6 keyspace). Widening with a counter keeps
+  // this terminating rather than looping on a degenerate random source.
+  const base = `${prefix}${createRandomIdToken(ID_TOKEN_LENGTH)}`;
+  let suffix = 0;
+  while (taken.has(`${base}${suffix.toString(36)}`)) {
+    suffix += 1;
+  }
+
+  return `${base}${suffix.toString(36)}`;
+}
+
 export function createNextCommentId(
   existingComments: Iterable<Pick<CriticComment, "id">>,
 ): string {
-  let maxId = 0;
-
+  const taken = new Set<string>();
   for (const comment of existingComments) {
-    const match = comment.id.match(/^c(\d+)$/);
-    if (!match) continue;
-
-    const parsed = Number.parseInt(match[1] || "0", 10);
-    if (parsed > maxId) {
-      maxId = parsed;
-    }
+    taken.add(comment.id);
   }
 
-  return `c${maxId + 1}`;
+  return createUniqueReviewId("c", taken);
 }
 
 export function createNextChangeId(
   existingChanges: Iterable<Pick<CriticChangeAttrs, "changeId">>,
 ): string {
-  let maxId = 0;
-
+  const taken = new Set<string>();
   for (const change of existingChanges) {
-    const match = change.changeId.match(/^s(\d+)$/);
-    if (!match) continue;
-
-    const parsed = Number.parseInt(match[1] || "0", 10);
-    if (parsed > maxId) {
-      maxId = parsed;
-    }
+    taken.add(change.changeId);
   }
 
-  return `s${maxId + 1}`;
+  return createUniqueReviewId("s", taken);
 }
 
 function createCommentWithContext(

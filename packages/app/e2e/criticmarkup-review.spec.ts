@@ -9,6 +9,17 @@ import {
   writeProjectFile,
 } from "./helpers";
 
+/**
+ * Freshly allocated comment ids carry a random suffix (see
+ * createNextCommentId), so a test that just created a comment or reply has to
+ * match the testid by shape. Exact ids are still used where the id comes from
+ * fixture content the test wrote itself.
+ */
+const newCommentEditor = /^comment-rail-c[0-9a-z]+-editor$/;
+const newCommentSaveButton = /^comment-rail-c[0-9a-z]+-action-save$/;
+const newCommentDeleteThreadButton =
+  /^comment-rail-c[0-9a-z]+-action-delete-thread$/;
+
 test.describe("CriticMarkup review flows", () => {
   let projectDir: string;
 
@@ -44,14 +55,10 @@ test.describe("CriticMarkup review flows", () => {
       .evaluate((element) => {
         (element as HTMLButtonElement).click();
       });
-    await page
-      .getByTestId("comment-rail-c2-editor")
-      .fill("Added context looks good.");
-    await page
-      .getByTestId("comment-rail-c2-action-save")
-      .evaluate((element) => {
-        (element as HTMLButtonElement).click();
-      });
+    await page.getByTestId(newCommentEditor).fill("Added context looks good.");
+    await page.getByTestId(newCommentSaveButton).evaluate((element) => {
+      (element as HTMLButtonElement).click();
+    });
 
     await expect
       .poll(() => readProjectFile(projectDir, "comment.md"))
@@ -80,15 +87,13 @@ test.describe("CriticMarkup review flows", () => {
     await openMarkdownFile(page, filePath);
     await selectRichText(page, "target text");
     await page.getByTestId("selection-menu-action-comment").click();
-    await page
-      .getByTestId("comment-rail-c1-editor")
-      .fill("Clarify this phrase.");
-    await page.getByTestId("comment-rail-c1-action-save").click();
+    await page.getByTestId(newCommentEditor).fill("Clarify this phrase.");
+    await page.getByTestId(newCommentSaveButton).click();
 
     await expect
       .poll(() => readProjectFile(projectDir, "new-comment.md"))
       .toMatch(
-        /\{==target text==\}\{>>Clarify this phrase\.<<\}\{id="c1" by="user" at="[^"]+"\}/,
+        /\{==target text==\}\{>>Clarify this phrase\.<<\}\{id="c[0-9a-z]+" by="user" at="[^"]+"\}/,
       );
 
     logE2eEvent("criticmarkup.root-comment-saved", {
@@ -119,14 +124,12 @@ test.describe("CriticMarkup review flows", () => {
     const addSamples = await addSamplesPromise;
 
     expect(hasAnimatedReviewLayout(addSamples)).toBe(true);
-    await page
-      .getByTestId("comment-rail-c1-editor")
-      .fill("Clarify this phrase.");
-    await page.getByTestId("comment-rail-c1-action-save").click();
+    await page.getByTestId(newCommentEditor).fill("Clarify this phrase.");
+    await page.getByTestId(newCommentSaveButton).click();
 
-    await page.getByTestId("comment-rail-c1-action-delete-thread").waitFor();
+    await page.getByTestId(newCommentDeleteThreadButton).waitFor();
     const removeSamplesPromise = sampleReviewLayoutAnimation(page);
-    await page.getByTestId("comment-rail-c1-action-delete-thread").click();
+    await page.getByTestId(newCommentDeleteThreadButton).click();
     const removeSamples = await removeSamplesPromise;
 
     expect(hasAnimatedReviewLayout(removeSamples)).toBe(true);

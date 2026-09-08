@@ -327,7 +327,11 @@ describe("createApp", () => {
     expect(response.status).toBe(201);
     expect(saved).toContain("workflow:\n  owner: editorial");
     expect(saved).toContain("  c1:");
-    expect(saved).toContain("  c2:");
+    // The appended comment's id is freshly allocated with a random suffix, so
+    // match its shape rather than assuming the old sequential "c2".
+    expect(saved).toMatch(
+      /\n {2}c[0-9a-z]+:\n {4}body: Please address the risk/,
+    );
     expect(saved).toContain("    body: Please address the risk section.");
     expect(saved).toContain("    by: user");
     expect(response.body.event.summary).toMatchObject({

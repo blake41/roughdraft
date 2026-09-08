@@ -554,10 +554,50 @@ describe("RFM mutation helpers", () => {
     );
 
     expect(output).toContain("workflow:\n  owner: editorial");
-    expect(output).toContain("  c2:");
+    const appended = extractRoughdraftReviewIndex(output).items.find(
+      (item) => item.text === "Please address the risk section.",
+    );
+    expect(appended?.id).toMatch(/^c[0-9a-z]+$/);
+    expect(appended?.id).not.toBe("c1");
     expect(output).toContain("    body: Please address the risk section.");
     expect(output).toContain("    by: user");
     expect(output).toContain("    at: 2026-05-24T12:00:00.000Z");
+  });
+
+  it("allocates document-comment ids that do not collide across concurrent writers", () => {
+    // Two writers appending from the SAME snapshot must not land on the same
+    // id. Under the old max+1 scheme both would have produced "c2".
+    const markdown = [
+      "# Draft",
+      "",
+      "Needs {==support==}{>>Add a source<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-04-28T12:00:00.000Z"',
+      "",
+    ].join("\n");
+
+    const allocate = (message: string) =>
+      extractRoughdraftReviewIndex(
+        appendRoughdraftDocumentComment(markdown, {
+          message,
+          author: "user",
+          at: "2026-05-24T12:00:00.000Z",
+        }),
+      ).items.find((item) => item.text === message)?.id;
+
+    const ids = new Set(
+      Array.from({ length: 50 }, (_, index) => allocate(`Note ${index}`)),
+    );
+
+    expect(ids.size).toBe(50);
+    for (const id of ids) {
+      expect(id).toMatch(/^c[0-9a-z]+$/);
+      expect(id).not.toBe("c1");
+    }
   });
 
   it("rejects reply text that would close CriticMarkup early", () => {

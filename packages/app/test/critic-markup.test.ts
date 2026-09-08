@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Editor } from "@tiptap/core";
 import {
   createCriticChange,
@@ -387,7 +387,9 @@ describe("CriticMarkup comments", () => {
         "Consider whether this belongs in the executive summary instead.",
       parentCommentId: null,
     });
-    expect(createNextCommentId(comments.values())).toBe("c4");
+    const nextCommentId = createNextCommentId(comments.values());
+    expect(nextCommentId).toMatch(/^c[0-9a-z]+$/);
+    expect(comments.has(nextCommentId)).toBe(false);
   });
 
   it("repairs stale YAML reply metadata when an inline root comment id was reused", () => {
@@ -424,7 +426,9 @@ describe("CriticMarkup comments", () => {
     );
     expect(output).not.toContain("body: reply to suggestion");
     expect(output).not.toContain("re: s1");
-    expect(createNextCommentId(comments.values())).toBe("c4");
+    const nextCommentId = createNextCommentId(comments.values());
+    expect(nextCommentId).toMatch(/^c[0-9a-z]+$/);
+    expect(comments.has(nextCommentId)).toBe(false);
   });
 
   it("renders YAML endmatter-backed suggestions", () => {
@@ -776,20 +780,65 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     );
   });
 
-  it("allocates simple document-local ids", () => {
-    expect(
-      createNextCommentId([{ id: "c2" }, { id: "note-1" }, { id: "c7" }]),
-    ).toBe("c8");
+  it("allocates comment ids that do not collide across concurrent writers", () => {
+    // Two writers allocating from the SAME (possibly stale) snapshot must not
+    // land on the same id — that is the concurrent-edit collision this
+    // replaced the old max+1 scheme to prevent.
+    const snapshot = [{ id: "c2" }, { id: "note-1" }, { id: "c7" }];
+    const ids = new Set(
+      Array.from({ length: 50 }, () => createNextCommentId(snapshot)),
+    );
+
+    expect(ids.size).toBe(50);
+    for (const id of ids) {
+      expect(id).toMatch(/^c[0-9a-z]+$/);
+      expect(["c2", "note-1", "c7"]).not.toContain(id);
+    }
   });
 
-  it("allocates simple document-local suggestion ids", () => {
-    expect(
-      createNextChangeId([
-        { changeId: "s2" },
-        { changeId: "suggestion-1" },
-        { changeId: "s7" },
-      ]),
-    ).toBe("s8");
+  it("allocates suggestion ids that do not collide across concurrent writers", () => {
+    const snapshot = [
+      { changeId: "s2" },
+      { changeId: "suggestion-1" },
+      { changeId: "s7" },
+    ];
+    const ids = new Set(
+      Array.from({ length: 50 }, () => createNextChangeId(snapshot)),
+    );
+
+    expect(ids.size).toBe(50);
+    for (const id of ids) {
+      expect(id).toMatch(/^s[0-9a-z]+$/);
+      expect(["s2", "suggestion-1", "s7"]).not.toContain(id);
+    }
+  });
+
+  it("regenerates a comment id that collides with the existing snapshot", () => {
+    // Force the first random draw to reproduce an id already in the document,
+    // then confirm the allocator retries rather than handing back a duplicate.
+    const collidingBytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    const getRandomValues = vi
+      .spyOn(globalThis.crypto, "getRandomValues")
+      .mockImplementationOnce(((target: Uint8Array) => {
+        target.set(collidingBytes);
+        return target;
+      }) as typeof globalThis.crypto.getRandomValues);
+
+    const takenId = createNextCommentId([]);
+    getRandomValues.mockRestore();
+
+    const secondCollide = vi
+      .spyOn(globalThis.crypto, "getRandomValues")
+      .mockImplementationOnce(((target: Uint8Array) => {
+        target.set(collidingBytes);
+        return target;
+      }) as typeof globalThis.crypto.getRandomValues);
+
+    const nextId = createNextCommentId([{ id: takenId }]);
+    secondCollide.mockRestore();
+
+    expect(nextId).not.toBe(takenId);
+    expect(nextId).toMatch(/^c[0-9a-z]+$/);
   });
 
   it("round-trips an insertion suggestion with metadata", () => {
@@ -857,7 +906,7 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     );
 
     expect(editorStateToCriticMarkdown(doc, comments)).toMatch(
-      /^Add \{\+\+new text\+\+\}\{id="s1" by="user" at="[^"]+"\} here\.\n$/,
+      /^Add \{\+\+new text\+\+\}\{id="s[0-9a-z]+" by="user" at="[^"]+"\} here\.\n$/,
     );
   });
 
@@ -1017,7 +1066,7 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
       }),
     ).toMatchObject({
       kind: "addition",
-      changeId: "s2",
+      changeId: expect.stringMatching(/^s[0-9a-z]+$/),
       authorType: "user",
       authorId: "user",
     });

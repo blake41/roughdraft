@@ -56,7 +56,11 @@ interface PageCardProps {
   selected?: boolean;
   layout?: "default" | "embedded-demo";
   focusRequestKey?: string | null;
-  onSave: (id: string, content: string) => Promise<void>;
+  onSave: (
+    id: string,
+    content: string,
+    base: { version?: string; content: string },
+  ) => Promise<void>;
   onSaveStateChange?: (state: DocumentSaveState) => void;
   editorViewMode?: EditorViewMode;
   interactionMode?: DocumentInteractionMode;
@@ -64,7 +68,7 @@ interface PageCardProps {
   onEditorReady?: (editor: Editor | null) => void;
   onCommentRailPresenceChange?: (hasCommentRailSpace: boolean) => void;
   onDirtyStateChange?: (isDirty: boolean) => void;
-  onLocalContentChange?: (markdown: string) => void;
+  onLocalContentChange?: (markdown: string, version?: string) => void;
   onSaveControllerChange?: (controller: DocumentSaveController | null) => void;
   saveBlocked?: boolean;
   forceResetKey?: string | null;
@@ -76,7 +80,11 @@ interface PageCardEditorSurfaceProps {
   selected: boolean;
   layout: "default" | "embedded-demo";
   focusRequestKey: string | null;
-  onSave: (id: string, content: string) => Promise<void>;
+  onSave: (
+    id: string,
+    content: string,
+    base: { version?: string; content: string },
+  ) => Promise<void>;
   onSaveStateChange: (state: DocumentSaveState) => void;
   editorViewMode: EditorViewMode;
   interactionMode: DocumentInteractionMode;
@@ -84,7 +92,7 @@ interface PageCardEditorSurfaceProps {
   onEditorReady?: (editor: Editor | null) => void;
   onCommentRailPresenceChange?: (hasCommentRailSpace: boolean) => void;
   onDirtyStateChange?: (isDirty: boolean) => void;
-  onLocalContentChange?: (markdown: string) => void;
+  onLocalContentChange?: (markdown: string, version?: string) => void;
   onSaveControllerChange?: (controller: DocumentSaveController | null) => void;
   saveBlocked?: boolean;
   forceResetKey?: string | null;
@@ -2140,6 +2148,12 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
   const recentMarkdownRef = useRef<Set<string>>(new Set());
   const previousEditorViewModeRef = useRef<EditorViewMode>(editorViewMode);
   const lastAcceptedMarkdownRef = useRef(page.content);
+  // The document version that lastAcceptedMarkdownRef's content is based on.
+  // Deliberately NOT advanced when an external page.content update is
+  // deferred (open comment draft / local edits), so a save always carries the
+  // version its content actually derives from rather than the freshest
+  // version App happens to know about.
+  const acceptedVersionRef = useRef(page.version);
   const localDirtyRef = useRef(false);
   const forceResetKeyRef = useRef(forceResetKey);
   const [markdown, setMarkdown] = useState(page.content);
@@ -2172,13 +2186,14 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
   );
 
   const acceptMarkdown = useCallback(
-    (nextMarkdown: string) => {
+    (nextMarkdown: string, nextVersion?: string) => {
       pendingMarkdownRef.current = nextMarkdown;
       lastAcceptedMarkdownRef.current = nextMarkdown;
+      acceptedVersionRef.current = nextVersion;
       setMarkdown(nextMarkdown);
       setRichTextSourceMarkdown(nextMarkdown);
       setRichTextSourceVersion((current) => current + 1);
-      onLocalContentChange?.(nextMarkdown);
+      onLocalContentChange?.(nextMarkdown, nextVersion);
       reportDirtyState(false);
       onSaveStateChange("saved");
     },
@@ -2204,11 +2219,19 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
         return { status: "blocked" };
       }
 
+      // Read the base synchronously, BEFORE the await: an external refresh
+      // landing mid-save must not retroactively change the version this save
+      // claims to be based on.
+      const base = {
+        version: acceptedVersionRef.current,
+        content: lastAcceptedMarkdownRef.current,
+      };
+
       rememberRecentMarkdown(nextMarkdown);
       onSaveStateChange("saving");
 
       try {
-        await onSave(page.id, nextMarkdown);
+        await onSave(page.id, nextMarkdown, base);
         lastAcceptedMarkdownRef.current = nextMarkdown;
         reportDirtyState(pendingMarkdownRef.current !== nextMarkdown);
         onSaveStateChange(
@@ -2295,7 +2318,7 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     (nextMarkdown: string) => {
       pendingMarkdownRef.current = nextMarkdown;
       setMarkdown(nextMarkdown);
-      onLocalContentChange?.(nextMarkdown);
+      onLocalContentChange?.(nextMarkdown, acceptedVersionRef.current);
       reportDirtyState(nextMarkdown !== lastAcceptedMarkdownRef.current);
       scheduleSave(nextMarkdown);
     },
@@ -2308,18 +2331,22 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
 
     if (forceResetChanged) {
       recentMarkdownRef.current.delete(page.content);
-      acceptMarkdown(page.content);
+      acceptMarkdown(page.content, page.version);
       return;
     }
 
     if (recentMarkdownRef.current.has(page.content)) {
       recentMarkdownRef.current.delete(page.content);
       lastAcceptedMarkdownRef.current = page.content;
+      acceptedVersionRef.current = page.version;
       pendingMarkdownRef.current = markdown;
       reportDirtyState(markdown !== page.content);
       return;
     }
 
+    // Deferral branch: the editor keeps showing content that does NOT reflect
+    // page.content, so acceptedVersionRef must stay pinned to the version the
+    // editor content does reflect.
     if (
       (localDirtyRef.current || hasOpenCommentDraft) &&
       markdown !== page.content
@@ -2329,18 +2356,20 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
 
     if (markdown === page.content) {
       lastAcceptedMarkdownRef.current = page.content;
+      acceptedVersionRef.current = page.version;
       pendingMarkdownRef.current = page.content;
       reportDirtyState(false);
       return;
     }
 
-    acceptMarkdown(page.content);
+    acceptMarkdown(page.content, page.version);
   }, [
     acceptMarkdown,
     forceResetKey,
     hasOpenCommentDraft,
     markdown,
     page.content,
+    page.version,
     reportDirtyState,
   ]);
 
