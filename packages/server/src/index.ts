@@ -9,6 +9,7 @@ import {
   extractRoughdraftReviewIndex,
 } from "@roughdraft/rfm";
 import express, { type Express, type Request, type Response } from "express";
+import { merge as diff3Merge } from "node-diff3";
 import {
   hasNonLoopbackHost,
   ROUGHDRAFT_DEFAULT_PORT,
@@ -176,6 +177,25 @@ function fileVersionFromFile(filePath: string): string {
   const content = fs.readFileSync(filePath);
   const stats = fs.statSync(filePath);
   return fileVersionFromContent(stats, content);
+}
+
+/**
+ * 3-way merge for a save landing against a file that moved out from under it.
+ * `incoming` is the client's edit, `base` is the content it was edited against,
+ * `diskContent` is what's actually on disk now. Returns the merged text, or
+ * null if the regions the two sides touched actually overlap (a real conflict,
+ * left for the caller to 409 on).
+ */
+function mergeMarkdown(
+  incoming: string,
+  base: string,
+  diskContent: string,
+): string | null {
+  const { conflict, result } = diff3Merge(incoming, base, diskContent, {
+    stringSeparator: "\n",
+  });
+  if (conflict) return null;
+  return result.join("\n");
 }
 
 function normalizeOverallComment(input: unknown): string | undefined {
@@ -832,13 +852,27 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       return;
     }
 
-    const { content, expectedVersion } = req.body as {
+    const { content, expectedVersion, baseContent } = req.body as {
       content: string;
       expectedVersion?: string;
+      baseContent?: string;
     };
     const currentVersion = fileVersionFromFile(absolutePath);
 
     if (expectedVersion && expectedVersion !== currentVersion) {
+      if (typeof baseContent === "string") {
+        const diskContent = fs.readFileSync(absolutePath, "utf-8");
+        const merged = mergeMarkdown(content, baseContent, diskContent);
+        if (merged !== null) {
+          fs.writeFileSync(absolutePath, merged);
+          res.json({
+            ...markdownPageFromFile(relativePath, absolutePath),
+            merged: true,
+          });
+          return;
+        }
+      }
+
       res.status(409).json({
         error: "Markdown file changed on disk",
         current: markdownPageFromFile(relativePath, absolutePath),

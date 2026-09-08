@@ -3,6 +3,9 @@ export interface Page {
   title: string;
   content: string;
   version?: string;
+  /** True when this save landed via a server-side 3-way merge rather than a
+   * clean version match — the returned content already includes both sides. */
+  merged?: boolean;
 }
 
 export interface MarkdownFileChangeEvent {
@@ -57,6 +60,7 @@ export interface StorageBackend {
     relativePath: string,
     content: string,
     expectedVersion?: string,
+    baseContent?: string,
   ): Promise<Page | undefined>;
   watchMarkdownFile?(
     relativePath: string,

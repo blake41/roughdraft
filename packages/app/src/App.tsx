@@ -1709,6 +1709,7 @@ export function App() {
           activeDocumentPath,
           content,
           expectedVersion,
+          base.content,
         );
       } catch (error) {
         if (error instanceof MarkdownFileConflictError) {

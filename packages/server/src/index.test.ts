@@ -236,6 +236,73 @@ describe("createApp", () => {
     expect(fs.readFileSync(filePath, "utf-8")).toBe("# External\n");
   });
 
+  it("merges a stale write when baseContent is supplied and the changed regions are disjoint", async () => {
+    const filePath = path.join(projectDir, "merge.md");
+    const original = "# Doc\n\nFirst paragraph.\n\nSecond paragraph.\n";
+    fs.writeFileSync(filePath, original);
+
+    const { app } = createApp({ homeDir, staticDirPath: projectDir });
+
+    const readResponse = await request(app).get("/api/markdown-file").query({
+      projectPath: projectDir,
+      path: "merge.md",
+    });
+
+    // Someone else (an AI agent, another tab) edits the second paragraph.
+    fs.writeFileSync(
+      filePath,
+      "# Doc\n\nFirst paragraph.\n\nSecond paragraph, edited externally.\n",
+    );
+
+    // Our save is based on the original content but only touched the first
+    // paragraph — a disjoint region from the external edit.
+    const mergeResponse = await request(app)
+      .put("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "merge.md" })
+      .send({
+        content:
+          "# Doc\n\nFirst paragraph, edited locally.\n\nSecond paragraph.\n",
+        expectedVersion: readResponse.body.version,
+        baseContent: original,
+      });
+
+    expect(mergeResponse.status).toBe(200);
+    expect(mergeResponse.body.merged).toBe(true);
+    const finalContent = fs.readFileSync(filePath, "utf-8");
+    expect(finalContent).toContain("First paragraph, edited locally.");
+    expect(finalContent).toContain("Second paragraph, edited externally.");
+  });
+
+  it("still rejects with a 409 when baseContent is supplied but the same region changed on both sides", async () => {
+    const filePath = path.join(projectDir, "conflict-merge.md");
+    const original = "# Doc\n\nOriginal line.\n";
+    fs.writeFileSync(filePath, original);
+
+    const { app } = createApp({ homeDir, staticDirPath: projectDir });
+
+    const readResponse = await request(app).get("/api/markdown-file").query({
+      projectPath: projectDir,
+      path: "conflict-merge.md",
+    });
+
+    fs.writeFileSync(filePath, "# Doc\n\nExternally changed line.\n");
+
+    const conflictResponse = await request(app)
+      .put("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "conflict-merge.md" })
+      .send({
+        content: "# Doc\n\nLocally changed line.\n",
+        expectedVersion: readResponse.body.version,
+        baseContent: original,
+      });
+
+    expect(conflictResponse.status).toBe(409);
+    expect(conflictResponse.body.error).toBe("Markdown file changed on disk");
+    expect(fs.readFileSync(filePath, "utf-8")).toBe(
+      "# Doc\n\nExternally changed line.\n",
+    );
+  });
+
   it("rejects markdown-file reads outside the project directory", async () => {
     const { app } = createApp({
       homeDir,

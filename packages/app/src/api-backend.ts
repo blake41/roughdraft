@@ -60,6 +60,7 @@ export class ApiBackend implements StorageBackend {
     relativePath: string,
     content: string,
     expectedVersion?: string,
+    baseContent?: string,
   ): Promise<Page> {
     const res = await fetch(
       this.buildUrl("/api/markdown-file", { path: relativePath }),
@@ -69,6 +70,7 @@ export class ApiBackend implements StorageBackend {
         body: JSON.stringify({
           content,
           expectedVersion,
+          baseContent,
           projectPath: this.info.projectPath,
         }),
       },
