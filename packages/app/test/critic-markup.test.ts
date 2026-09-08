@@ -129,6 +129,26 @@ describe("CriticMarkup comments", () => {
     expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
   });
 
+  it("parses a reply separated from its root by a stray space as part of the same thread", () => {
+    const input =
+      'This is {==highlighted==}{>>root comment<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"} {>>a reply<<}{id="c2" by="AI" at="2024-01-15T10:31:00.000Z" re="c1"} text.\n';
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+
+    expect(comments.get("c1")).toMatchObject({ content: "root comment" });
+    expect(comments.get("c2")).toMatchObject({
+      content: "a reply",
+      parentCommentId: "c1",
+    });
+    const docText = JSON.stringify(doc);
+    expect(docText).not.toContain("{>>");
+    expect(docText).not.toContain("⁣");
+    const anchorMarks = doc.content?.[0]?.content?.find(
+      (node) => node.text === "highlighted",
+    )?.marks;
+    expect(anchorMarks?.[0]?.attrs?.commentIds).toEqual(["c1", "c2"]);
+  });
+
   it("renders YAML endmatter-backed root comments and replies", () => {
     const input = [
       "This is {==highlighted==}{>>comment text<<}{#c1} text.",

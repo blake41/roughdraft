@@ -69,7 +69,7 @@ interface CriticChangeToken {
 const extensions = createEditorExtensions("");
 const criticCommentAnchorPattern = /^\{==([\s\S]+?)==\}/;
 const criticCommentBlockPattern =
-  /^\{>>([\s\S]*?)<<\}(?:(\{@([\s\S]+?)@\})|(\{(?:\s*[A-Za-z][A-Za-z0-9_-]*="(?:\\[\s\S]|[^"\\])*")+\s*\})|(\{#[A-Za-z][A-Za-z0-9_-]*\}))?/;
+  /^[ \t]*\{>>([\s\S]*?)<<\}(?:(\{@([\s\S]+?)@\})|(\{(?:\s*[A-Za-z][A-Za-z0-9_-]*="(?:\\[\s\S]|[^"\\])*")+\s*\})|(\{#[A-Za-z][A-Za-z0-9_-]*\}))?/;
 const criticAdditionPattern = /^\{\+\+([\s\S]+?)\+\+\}/;
 const criticDeletionPattern = /^\{--([\s\S]+?)--\}/;
 const criticSubstitutionPattern = /^\{~~([\s\S]+?)~>([\s\S]+?)~~\}/;
