@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { Editor } from "@tiptap/core";
 import {
+  buildCommentThreads,
   createCriticChange,
   createNextChangeId,
   createNextCommentId,
@@ -10,6 +11,7 @@ import {
   criticMarkdownToEditorState,
   criticMarkdownToRenderedHtml,
   editorStateToCriticMarkdown,
+  flattenCommentThreads,
   getCommentDescendantIds,
 } from "../src/critic-markup";
 import { createEditorExtensions } from "../src/editor-extensions";
@@ -1164,6 +1166,56 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     ]);
 
     expect(getCommentDescendantIds("c1", comments)).toEqual(["c2", "c3", "c4"]);
+  });
+
+  it("terminates on a re= cycle instead of looping forever", () => {
+    const comments = new Map([
+      [
+        "c1",
+        {
+          id: "c1",
+          content: "Claims c2 as parent",
+          createdAt: "2024-01-15T10:30:00.000Z",
+          parentCommentId: "c2",
+        },
+      ],
+      [
+        "c2",
+        {
+          id: "c2",
+          content: "Claims c1 as parent",
+          createdAt: "2024-01-15T10:31:00.000Z",
+          parentCommentId: "c1",
+        },
+      ],
+    ]);
+
+    expect(getCommentDescendantIds("c1", comments)).toEqual(["c2"]);
+    expect(getCommentDescendantIds("c2", comments)).toEqual(["c1"]);
+  });
+
+  it("resolves a re= cycle into independent roots instead of dropping the comments", () => {
+    const comments = [
+      {
+        id: "c1",
+        content: "Claims c2 as parent",
+        createdAt: "2024-01-15T10:30:00.000Z",
+        parentCommentId: "c2",
+      },
+      {
+        id: "c2",
+        content: "Claims c1 as parent",
+        createdAt: "2024-01-15T10:31:00.000Z",
+        parentCommentId: "c1",
+      },
+    ];
+
+    const threads = buildCommentThreads(comments);
+
+    expect(flattenCommentThreads(threads).map((comment) => comment.id)).toEqual(
+      ["c1", "c2"],
+    );
+    expect(threads.every((thread) => thread.replies.length === 0)).toBe(true);
   });
 });
 

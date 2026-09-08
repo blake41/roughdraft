@@ -421,6 +421,231 @@ describe("document comment layout helpers", () => {
     ]);
   });
 
+  it("nests a reply anchored in a different group under its parent's item", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c15",
+        content: "Root question",
+        createdAt: "2026-09-08T15:01:00.000Z",
+      },
+      {
+        id: "c16",
+        content: "Misplaced reply",
+        createdAt: "2026-09-08T15:35:00.000Z",
+        parentCommentId: "c15",
+      },
+    ]);
+
+    const items = buildCommentThreadRailItems(
+      [
+        { key: "c15", commentIds: ["c15"], anchorTop: 100, anchorBottom: 114 },
+        { key: "c16", commentIds: ["c16"], anchorTop: 900, anchorBottom: 914 },
+      ],
+      comments,
+    );
+
+    expect(items).toEqual([
+      {
+        key: "c15",
+        anchorGroupKey: "c15",
+        rootCommentId: "c15",
+        commentIds: ["c15", "c16"],
+        anchorTop: 100,
+        anchorBottom: 114,
+      },
+    ]);
+  });
+
+  it("nests a reply-of-a-reply anchored in a third group under the same root item", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c1",
+        content: "Root",
+        createdAt: "2026-09-08T15:00:00.000Z",
+      },
+      {
+        id: "c2",
+        content: "Reply, correctly placed",
+        createdAt: "2026-09-08T15:01:00.000Z",
+        parentCommentId: "c1",
+      },
+      {
+        id: "c3",
+        content: "Reply-of-reply, anchored elsewhere",
+        createdAt: "2026-09-08T15:02:00.000Z",
+        parentCommentId: "c2",
+      },
+    ]);
+
+    const items = buildCommentThreadRailItems(
+      [
+        {
+          key: "g1",
+          commentIds: ["c1", "c2"],
+          anchorTop: 50,
+          anchorBottom: 64,
+        },
+        { key: "g2", commentIds: ["c3"], anchorTop: 500, anchorBottom: 514 },
+      ],
+      comments,
+    );
+
+    expect(items).toEqual([
+      {
+        key: "c1",
+        anchorGroupKey: "g1",
+        rootCommentId: "c1",
+        commentIds: ["c1", "c2", "c3"],
+        anchorTop: 50,
+        anchorBottom: 64,
+      },
+    ]);
+  });
+
+  it("anchors a rootless root at its reply's group when the root itself has no anchor", () => {
+    const comments = createCommentsMap([
+      {
+        id: "root-no-anchor",
+        content: "Root, endmatter-only",
+        createdAt: "2026-09-08T15:00:00.000Z",
+      },
+      {
+        id: "reply-anchored",
+        content: "Reply, has an anchor",
+        createdAt: "2026-09-08T15:01:00.000Z",
+        parentCommentId: "root-no-anchor",
+      },
+    ]);
+
+    const items = buildCommentThreadRailItems(
+      [
+        {
+          key: "reply-anchored",
+          commentIds: ["reply-anchored"],
+          anchorTop: 300,
+          anchorBottom: 314,
+        },
+      ],
+      comments,
+    );
+
+    expect(items).toEqual([
+      {
+        key: "root-no-anchor",
+        anchorGroupKey: "reply-anchored",
+        rootCommentId: "root-no-anchor",
+        commentIds: ["root-no-anchor", "reply-anchored"],
+        anchorTop: 300,
+        anchorBottom: 314,
+      },
+    ]);
+  });
+
+  it("spans the min/max anchor when a root's mark is split across two groups", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c4",
+        content: "Split root",
+        createdAt: "2026-09-08T15:00:00.000Z",
+      },
+    ]);
+
+    const items = buildCommentThreadRailItems(
+      [
+        { key: "g1", commentIds: ["c4"], anchorTop: 100, anchorBottom: 114 },
+        { key: "g2", commentIds: ["c4"], anchorTop: 140, anchorBottom: 160 },
+      ],
+      comments,
+    );
+
+    expect(items).toEqual([
+      {
+        key: "c4",
+        anchorGroupKey: "g1",
+        rootCommentId: "c4",
+        commentIds: ["c4"],
+        anchorTop: 100,
+        anchorBottom: 160,
+      },
+    ]);
+  });
+
+  it("includes an unanchored reply in its parent's commentIds without a group of its own", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c1",
+        content: "Root",
+        createdAt: "2026-09-08T15:00:00.000Z",
+      },
+      {
+        id: "c2",
+        content: "Endmatter-only reply, never anchored inline",
+        createdAt: "2026-09-08T15:01:00.000Z",
+        parentCommentId: "c1",
+      },
+    ]);
+
+    const items = buildCommentThreadRailItems(
+      [{ key: "c1", commentIds: ["c1"], anchorTop: 10, anchorBottom: 24 }],
+      comments,
+    );
+
+    expect(items).toEqual([
+      {
+        key: "c1",
+        anchorGroupKey: "c1",
+        rootCommentId: "c1",
+        commentIds: ["c1", "c2"],
+        anchorTop: 10,
+        anchorBottom: 24,
+      },
+    ]);
+  });
+
+  it("treats a re= cycle as two independent roots instead of throwing", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c1",
+        content: "Claims c2 as parent",
+        createdAt: "2026-09-08T15:00:00.000Z",
+        parentCommentId: "c2",
+      },
+      {
+        id: "c2",
+        content: "Claims c1 as parent",
+        createdAt: "2026-09-08T15:01:00.000Z",
+        parentCommentId: "c1",
+      },
+    ]);
+
+    const items = buildCommentThreadRailItems(
+      [
+        { key: "c1", commentIds: ["c1"], anchorTop: 10, anchorBottom: 24 },
+        { key: "c2", commentIds: ["c2"], anchorTop: 40, anchorBottom: 54 },
+      ],
+      comments,
+    );
+
+    expect(items).toEqual([
+      {
+        key: "c1",
+        anchorGroupKey: "c1",
+        rootCommentId: "c1",
+        commentIds: ["c1"],
+        anchorTop: 10,
+        anchorBottom: 24,
+      },
+      {
+        key: "c2",
+        anchorGroupKey: "c2",
+        rootCommentId: "c2",
+        commentIds: ["c2"],
+        anchorTop: 40,
+        anchorBottom: 54,
+      },
+    ]);
+  });
+
   it("keeps active-neighboring threads visible when active alignment would go negative", () => {
     const layouts = resolveCommentThreadRailLayouts(
       [

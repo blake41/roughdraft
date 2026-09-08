@@ -192,33 +192,55 @@ export function groupCommentAnchorMeasurements(
   );
 }
 
+/**
+ * A reply's thread membership is decided by its `re=` parent link across the
+ * *entire* document, not by which anchor span it happens to be physically
+ * placed next to. A reply typed away from its parent (e.g. next to prose it
+ * was clarifying, rather than chained onto the parent's own block) still has
+ * to render nested under its parent's card here -- rendering must match the
+ * already-global id-graph resolution used for selection
+ * (getRootThreadIdForCommentId), or a misplaced reply's card becomes
+ * permanently unselectable (clicking it resolves its root elsewhere, which
+ * doesn't contain it).
+ */
 export function buildCommentThreadRailItems(
   groups: CommentGroupAnchor[],
   comments: ReadonlyMap<string, CriticComment>,
 ): CommentThreadRailItem[] {
+  const groupsByCommentId = new Map<string, CommentGroupAnchor[]>();
+  for (const group of groups) {
+    for (const commentId of group.commentIds) {
+      const hostGroups = groupsByCommentId.get(commentId) ?? [];
+      hostGroups.push(group);
+      groupsByCommentId.set(commentId, hostGroups);
+    }
+  }
+
   const items: CommentThreadRailItem[] = [];
 
-  for (const group of groups) {
-    const visibleComments = group.commentIds
-      .map((commentId) => comments.get(commentId))
-      .filter((comment): comment is CriticComment => Boolean(comment));
+  for (const thread of buildCommentThreads(comments.values())) {
+    const rootId = thread.comment.id;
+    const members = flattenCommentThreads([thread]);
+    if (members.length === 0) continue;
 
-    if (visibleComments.length === 0) continue;
+    const hostGroups =
+      groupsByCommentId.get(rootId) ??
+      members
+        .map((member) => groupsByCommentId.get(member.id))
+        .find((candidate): candidate is CommentGroupAnchor[] =>
+          Boolean(candidate?.length),
+        );
 
-    for (const thread of buildCommentThreads(visibleComments)) {
-      const threadComments = flattenCommentThreads([thread]);
+    if (!hostGroups || hostGroups.length === 0) continue;
 
-      if (threadComments.length === 0) continue;
-
-      items.push({
-        key: thread.comment.id,
-        anchorGroupKey: group.key,
-        rootCommentId: thread.comment.id,
-        commentIds: threadComments.map((comment) => comment.id),
-        anchorTop: group.anchorTop,
-        anchorBottom: group.anchorBottom,
-      });
-    }
+    items.push({
+      key: rootId,
+      anchorGroupKey: hostGroups[0].key,
+      rootCommentId: rootId,
+      commentIds: members.map((member) => member.id),
+      anchorTop: Math.min(...hostGroups.map((group) => group.anchorTop)),
+      anchorBottom: Math.max(...hostGroups.map((group) => group.anchorBottom)),
+    });
   }
 
   return items;

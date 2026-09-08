@@ -530,10 +530,38 @@ function parseChangeMetadata(
   };
 }
 
+function isPartOfParentCycle(
+  comment: CriticComment,
+  byId: ReadonlyMap<string, CriticComment>,
+  validCommentIds: ReadonlySet<string>,
+): boolean {
+  const visited = new Set<string>();
+  let current: CriticComment | undefined = comment;
+
+  while (current) {
+    if (visited.has(current.id)) return true;
+    visited.add(current.id);
+
+    const parentCommentId = current.parentCommentId;
+    if (
+      !parentCommentId ||
+      parentCommentId === current.id ||
+      !validCommentIds.has(parentCommentId)
+    ) {
+      return false;
+    }
+
+    current = byId.get(parentCommentId);
+  }
+
+  return false;
+}
+
 function buildCommentThreadsFromOrderedComments(
   orderedComments: CriticComment[],
 ): CriticCommentThread[] {
   const validCommentIds = new Set(orderedComments.map((comment) => comment.id));
+  const byId = new Map(orderedComments.map((comment) => [comment.id, comment]));
   const repliesByParentId = new Map<string, CriticComment[]>();
   const rootComments: CriticComment[] = [];
 
@@ -543,7 +571,8 @@ function buildCommentThreadsFromOrderedComments(
     if (
       !parentCommentId ||
       parentCommentId === comment.id ||
-      !validCommentIds.has(parentCommentId)
+      !validCommentIds.has(parentCommentId) ||
+      isPartOfParentCycle(comment, byId, validCommentIds)
     ) {
       rootComments.push(comment);
       continue;
@@ -639,11 +668,13 @@ export function getCommentDescendantIds(
   }
 
   const descendantIds: string[] = [];
+  const visited = new Set<string>([commentId]);
   const stack = [...(childrenByParentId.get(commentId) ?? [])].reverse();
 
   while (stack.length > 0) {
     const nextCommentId = stack.pop();
-    if (!nextCommentId) continue;
+    if (!nextCommentId || visited.has(nextCommentId)) continue;
+    visited.add(nextCommentId);
 
     descendantIds.push(nextCommentId);
 

@@ -249,19 +249,19 @@ export function DocumentReviewRail({
     [suggestions],
   );
 
+  const railComments = useMemo(
+    () =>
+      new Map(
+        [...comments].filter(
+          ([commentId]) => !suggestionCommentIds.has(commentId),
+        ),
+      ),
+    [comments, suggestionCommentIds],
+  );
+
   const visibleCommentThreads = useMemo(
     () =>
-      buildCommentThreadRailItems(
-        commentGroups
-          .map((group) => ({
-            ...group,
-            commentIds: group.commentIds.filter(
-              (commentId) => !suggestionCommentIds.has(commentId),
-            ),
-          }))
-          .filter((group) => group.commentIds.length > 0),
-        comments,
-      )
+      buildCommentThreadRailItems(commentGroups, railComments)
         .map((item) => {
           const visibleComments = item.commentIds
             .map((commentId) => comments.get(commentId))
@@ -281,7 +281,7 @@ export function DocumentReviewRail({
             visibleComments: CriticComment[];
           } => Boolean(item),
         ),
-    [commentGroups, comments, suggestionCommentIds],
+    [commentGroups, comments, railComments],
   );
 
   const commentEntries = useMemo(
