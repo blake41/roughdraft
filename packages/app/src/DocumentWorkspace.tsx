@@ -980,7 +980,7 @@ export function DocumentWorkspace({
           </div>
         </div>
       ) : null}
-      <div className="mx-auto min-h-full max-w-[1080px]">
+      <div className="mx-auto min-h-full max-w-[87.5rem]">
         {documentPage ? (
           <div
             ref={documentHeaderRef}
