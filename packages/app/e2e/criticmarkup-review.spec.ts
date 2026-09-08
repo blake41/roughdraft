@@ -50,6 +50,7 @@ test.describe("CriticMarkup review flows", () => {
       "Needs detail",
     );
 
+    await page.getByTestId("comment-thread-c1").click();
     await page
       .getByTestId("comment-rail-c1-action-reply")
       .evaluate((element) => {

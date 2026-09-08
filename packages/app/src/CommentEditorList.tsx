@@ -727,6 +727,7 @@ function CommentThreadNode({
                   variant === "banner"
                     ? "text-slate-800 dark:text-slate-200"
                     : "text-slate-700 dark:text-slate-300",
+                  variant === "rail" && !interactive && "line-clamp-4",
                 )}
               >
                 {isEditing ? null : renderedContent}
@@ -784,20 +785,22 @@ function CommentThreadNode({
                   }}
                 />
               ) : null}
-              <div className="mt-2 flex flex-wrap items-center gap-1">
-                {actions.map((action) => (
-                  <CommentActionButton
-                    key={action.key}
-                    label={action.label}
-                    testId={`comment-${variant}-${comment.id}-action-${action.key}`}
-                    tone={action.tone}
-                    presentation={action.presentation}
-                    icon={action.icon}
-                    compact={action.compact}
-                    onClick={action.onClick}
-                  />
-                ))}
-              </div>
+              {variant === "rail" && !interactive ? null : (
+                <div className="mt-2 flex flex-wrap items-center gap-1">
+                  {actions.map((action) => (
+                    <CommentActionButton
+                      key={action.key}
+                      label={action.label}
+                      testId={`comment-${variant}-${comment.id}-action-${action.key}`}
+                      tone={action.tone}
+                      presentation={action.presentation}
+                      icon={action.icon}
+                      compact={action.compact}
+                      onClick={action.onClick}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
